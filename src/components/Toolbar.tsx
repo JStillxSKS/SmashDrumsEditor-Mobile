@@ -1,0 +1,374 @@
+import { useEffect, useRef } from "react";
+import { useEditorStore } from "../store/useEditorStore";
+import { seekChartTime, seekToStrikeBar } from "../utils/audioElement";
+import {
+  activeSourceLabel,
+  getActiveAudioUrl,
+  getActiveDuration,
+} from "../utils/audioSource";
+import {
+  playEditorAudioAt,
+  syncAudioPlaybackRate,
+  syncAudioVolume,
+  waitForAudioSeek,
+} from "../utils/audioPlayback";
+import {
+  chartToAudioTime,
+  getSongOffset,
+  isInSilentLeadIn,
+  offsetFromMs,
+  OFFSET_NUDGE_FINE_MS,
+} from "../utils/offset";
+import { RESOLUTION, beatToTick, formatTick } from "../utils/resolution";
+import { bpmFromAnchors } from "../utils/timing";
+import { beatToTime, timeToBeat } from "../utils/timing";
+
+export function Toolbar() {
+  const {
+    audioUrl,
+    drumsAudioUrl,
+    audioSource,
+    audioFileName,
+    drumsAudioFileName,
+    currentTime,
+    scrollTick,
+    isPlaying,
+    meta,
+    loadAudio,
+    loadDrumsAudio,
+    loadMeta,
+    exportIndies,
+    exportChart,
+    setCurrentTime,
+    setIsPlaying,
+    setScrollTick,
+    setAudioSource,
+    nudgeOffset,
+    goToChartStart,
+    playbackSpeed,
+    songVolume,
+    audioBuffer,
+    bpmDetecting,
+    bpmConfidence,
+    setBpm,
+    detectBpmFromAudio,
+  } = useEditorStore();
+
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const rafRef = useRef(0);
+  const lastFrameRef = useRef(0);
+
+  const activeAudioUrl = getActiveAudioUrl({
+    audioSource,
+    audioUrl,
+    drumsAudioUrl,
+  });
+  const playingSource = activeSourceLabel({ audioSource, drumsAudioUrl });
+  const canPlay = Boolean(activeAudioUrl);
+
+  const chartTime = isPlaying
+    ? currentTime
+    : beatToTime(scrollTick / RESOLUTION, meta.SongTiming);
+  const offset = getSongOffset(meta);
+  const inSilence = isInSilentLeadIn(chartTime, offset);
+  const audioTime = chartToAudioTime(chartTime, offset);
+
+  const togglePlay = () => {
+    const audio = audioRef.current;
+    if (!audio || !activeAudioUrl) return;
+    if (isPlaying) {
+      audio.pause();
+      const pausedChart =
+        !audio.muted ? audio.currentTime + getSongOffset(meta) : chartTime;
+      setCurrentTime(pausedChart);
+      const beat = timeToBeat(pausedChart, meta.SongTiming);
+      setScrollTick(beat * RESOLUTION);
+      setIsPlaying(false);
+    } else {
+      seekToStrikeBar();
+      const { currentTime: strikeChartTime, meta: m } = useEditorStore.getState();
+      const off = getSongOffset(m);
+      const silent = isInSilentLeadIn(strikeChartTime, off);
+      if (silent) {
+        audio.muted = true;
+        void waitForAudioSeek(audio, 0);
+      } else {
+        audio.muted = false;
+        syncAudioPlaybackRate(audio, useEditorStore.getState().playbackSpeed);
+        void playEditorAudioAt(audio, chartToAudioTime(strikeChartTime, off));
+      }
+      setIsPlaying(true);
+    }
+  };
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !activeAudioUrl) return;
+
+    const chartTime = useEditorStore.getState().isPlaying
+      ? useEditorStore.getState().currentTime
+      : beatToTime(
+          useEditorStore.getState().scrollTick / RESOLUTION,
+          useEditorStore.getState().meta.SongTiming
+        );
+
+    const onReady = () => {
+      const state = useEditorStore.getState();
+      syncAudioPlaybackRate(audio, state.playbackSpeed);
+      syncAudioVolume(audio, state.songVolume);
+      seekChartTime(chartTime);
+      if (state.isPlaying && !isInSilentLeadIn(chartTime, getSongOffset(state.meta))) {
+        void playEditorAudioAt(
+          audio,
+          chartToAudioTime(chartTime, getSongOffset(state.meta))
+        );
+      }
+    };
+    audio.addEventListener("loadedmetadata", onReady);
+    syncAudioPlaybackRate(audio, playbackSpeed);
+    syncAudioVolume(audio, songVolume);
+    audio.load();
+    return () => audio.removeEventListener("loadedmetadata", onReady);
+  }, [activeAudioUrl, audioSource, playbackSpeed, songVolume]);
+
+  useEffect(() => {
+    seekChartTime(useEditorStore.getState().currentTime);
+  }, [meta.SongOffsetSeconds, meta.SongTiming]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const onEnd = () => setIsPlaying(false);
+
+    audio.addEventListener("ended", onEnd);
+    return () => {
+      audio.removeEventListener("ended", onEnd);
+    };
+  }, [setIsPlaying]);
+
+  useEffect(() => {
+    if (!isPlaying) {
+      cancelAnimationFrame(rafRef.current);
+      return;
+    }
+
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    lastFrameRef.current = performance.now();
+
+    const loop = () => {
+      const state = useEditorStore.getState();
+      const { currentTime: ct, meta: m, isPlaying: playing } = state;
+      const off = getSongOffset(m);
+      const dur = getActiveDuration(state);
+
+      if (!playing) return;
+
+      if (ct < off) {
+        const now = performance.now();
+        const dt = (now - lastFrameRef.current) / 1000;
+        lastFrameRef.current = now;
+        const speed = state.playbackSpeed;
+        const next = ct + dt * speed;
+        setCurrentTime(next);
+
+        if (next >= off) {
+          audio.muted = false;
+          void playEditorAudioAt(audio, 0);
+        }
+      } else if (!audio.paused && !audio.muted) {
+        setCurrentTime(audio.currentTime + off);
+      } else if (audio.paused && ct - off < dur) {
+        audio.muted = false;
+        void playEditorAudioAt(audio, chartToAudioTime(ct, off));
+      }
+
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [isPlaying]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        togglePlay();
+      } else if (e.key === "[") {
+        e.preventDefault();
+        nudgeOffset(-offsetFromMs(OFFSET_NUDGE_FINE_MS));
+      } else if (e.key === "]") {
+        e.preventDefault();
+        nudgeOffset(offsetFromMs(OFFSET_NUDGE_FINE_MS));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const fmt = (t: number) => {
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    const ms = Math.floor((t % 1) * 100);
+    return `${m}:${s.toString().padStart(2, "0")}.${ms.toString().padStart(2, "0")}`;
+  };
+
+  const tick = isPlaying ? beatToTick(timeToBeat(chartTime, meta.SongTiming)) : scrollTick;
+  const bpm = Math.round(bpmFromAnchors(meta.SongTiming) * 10) / 10;
+
+  return (
+    <header className="toolbar">
+      <div className="toolbar-left">
+        <div className="brand">
+          <img className="brand-logo" src="/app-icon.jpg" alt="" aria-hidden />
+          <div>
+            <h1>Smash Drums Editor</h1>
+          </div>
+        </div>
+        {meta.NameSong && (
+          <span className="song-title" title={meta.NameSong}>
+            {meta.NameSong}
+          </span>
+        )}
+      </div>
+
+      <div className="toolbar-center">
+        <button className="btn play-btn" onClick={togglePlay} disabled={!canPlay} title="Play / Pause (Space)">
+          {isPlaying ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="4" width="4" height="16" />
+              <rect x="14" y="4" width="4" height="16" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          )}
+        </button>
+        <div className="btn-group btn-group-tight audio-source-toggle">
+          <button
+            type="button"
+            className={audioSource === "song" ? "btn btn-sm active" : "btn btn-sm"}
+            disabled={!audioFileName}
+            title={audioFileName ?? "Load song audio"}
+            onClick={() => setAudioSource("song")}
+          >
+            Song
+          </button>
+          <button
+            type="button"
+            className={audioSource === "drums" ? "btn btn-sm active" : "btn btn-sm"}
+            disabled={!drumsAudioFileName}
+            title={drumsAudioFileName ?? "Load drums audio"}
+            onClick={() => setAudioSource("drums")}
+          >
+            Drums
+          </button>
+        </div>
+        <span className="timecode">
+          {inSilence
+            ? "Silent"
+            : `Audio (${playingSource}) ${fmt(audioTime)}`}
+        </span>
+        <span className="beatcode">
+          Chart {fmt(Math.max(0, chartTime))} · {formatTick(tick)}
+        </span>
+        <button
+          className="btn btn-sm"
+          type="button"
+          title="Jump to song start (beat 0)"
+          onClick={() => {
+            goToChartStart();
+            seekChartTime(0);
+          }}
+        >
+          ⏮ Start
+        </button>
+        <div
+          className="toolbar-bpm"
+          title={
+            bpmConfidence !== null
+              ? `Detect confidence ${Math.round(bpmConfidence * 100)}%`
+              : "Song BPM"
+          }
+        >
+          <label className="toolbar-bpm-label">
+            <span className="toolbar-bpm-text">BPM</span>
+            <input
+              className="toolbar-bpm-input"
+              type="number"
+              min={40}
+              max={300}
+              step={0.1}
+              value={bpm}
+              onChange={(e) => setBpm(Number(e.target.value))}
+            />
+          </label>
+          <button
+            className="btn btn-sm btn-accent toolbar-bpm-detect"
+            type="button"
+            disabled={!audioBuffer || bpmDetecting}
+            onClick={() => void detectBpmFromAudio()}
+          >
+            {bpmDetecting ? "…" : "Detect"}
+          </button>
+        </div>
+      </div>
+
+      <div className="toolbar-right">
+        <label className="file-btn">
+          🎵 Song
+          <input
+            type="file"
+            accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void loadAudio(f);
+            }}
+          />
+        </label>
+        <label className="file-btn">
+          🥁 Drums
+          <input
+            type="file"
+            accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void loadDrumsAudio(f);
+            }}
+          />
+        </label>
+        <label
+          className="file-btn"
+          title="Import .indie / .indies, meta.json, or Clone Hero .chart"
+        >
+          📂 Import
+          <input
+            type="file"
+            accept=".indie,.indies,.json,.chart,application/json,application/zip"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void loadMeta(f);
+              e.target.value = "";
+            }}
+          />
+        </label>
+        <button className="btn export-btn" onClick={() => void exportIndies()}>
+          Export .indies
+        </button>
+        <button className="btn" onClick={exportChart}>
+          Export CH chart + song.ini
+        </button>
+      </div>
+
+      <audio id="editor-audio" ref={audioRef} src={activeAudioUrl ?? undefined} />
+    </header>
+  );
+}
