@@ -1217,6 +1217,9 @@ export function ChartEditor() {
       return;
     }
 
+    const strikeTick = snapTick(activeScroll, snapTicks);
+    if (tick < strikeTick) return;
+
     toggleNote(beat, lane);
   };
 

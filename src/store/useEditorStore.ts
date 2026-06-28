@@ -487,8 +487,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   toggleNote: (beat, id) => {
-    const { difficulty, strength, charts, snapTicks } = get();
+    const { difficulty, strength, charts, snapTicks, scrollTick } = get();
     const snapped = snapBeat(beat, snapTicks);
+    const strikeTick = snapTick(scrollTick, snapTicks);
+    const noteTick = beatToTick(snapped);
     const notes = [...charts[difficulty]];
     const cellIdx = notes.findIndex((n) => {
       if (n.Id !== id) return false;
@@ -499,6 +501,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (cellIdx >= 0) {
       notes.splice(cellIdx, 1);
     } else {
+      if (noteTick < strikeTick) return;
       notes.push({ Beat: snapped, Id: id, Strength: strength });
     }
     notes.sort((a, b) => a.Beat - b.Beat || a.Id - b.Id);
@@ -518,8 +521,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   getActiveNotes: () => get().charts[get().difficulty],
 
   copyNotesInRange: async (minTick, maxTick) => {
-    const { difficulty, charts } = get();
-    const picked = notesInTickRange(charts[difficulty], minTick, maxTick);
+    const { difficulty, charts, scrollTick, snapTicks } = get();
+    const strikeTick = snapTick(scrollTick, snapTicks);
+    const picked = notesInTickRange(
+      charts[difficulty],
+      Math.max(minTick, strikeTick),
+      maxTick
+    );
     if (picked.length === 0) {
       set({ clipboardMessage: "Nothing to copy in view" });
       return 0;
