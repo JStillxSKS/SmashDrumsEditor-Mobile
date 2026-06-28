@@ -151,7 +151,9 @@ function drawGemNote(
   const { w, h, r } = noteBoxSize(laneW, rowPx, strength);
   const x = cx - w / 2;
   const y = cy - h / 2;
-  const baseBlur = strength === 2 ? 22 : strength === 0 ? 8 : 14;
+  const isCrystal = strength === 0;
+  const isBurning = strength === 2;
+  const baseBlur = isBurning ? 36 : isCrystal ? 5 : 14;
 
   ctx.save();
 
@@ -162,13 +164,38 @@ function drawGemNote(
     ctx.translate(-cx, -cy);
   }
 
-  ctx.shadowColor = hitIntensity > 0 ? "#ffffff" : color;
+  if (isCrystal) {
+    ctx.globalAlpha *= 0.52;
+  }
+
+  if (isBurning) {
+    ctx.shadowColor = hexToRgba(lighten(color, 50), 0.85);
+    ctx.shadowBlur = baseBlur + 20 + hitIntensity * 16;
+    ctx.beginPath();
+    ctx.roundRect(x - 4, y - 4, w + 8, h + 8, r + 3);
+    ctx.fillStyle = hexToRgba(color, 0.22 + hitIntensity * 0.12);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.shadowColor = hitIntensity > 0 ? "#ffffff" : isBurning ? lighten(color, 40) : color;
   ctx.shadowBlur = baseBlur + hitIntensity * 48;
 
   const body = ctx.createLinearGradient(x, y, x + w, y + h);
-  body.addColorStop(0, lighten(color, 80 + hitIntensity * 40));
-  body.addColorStop(0.35, color);
-  body.addColorStop(1, color + "cc");
+  if (isCrystal) {
+    body.addColorStop(0, hexToRgba(lighten(color, 90), 0.62));
+    body.addColorStop(0.35, hexToRgba(color, 0.38));
+    body.addColorStop(1, hexToRgba(color, 0.24));
+  } else if (isBurning) {
+    body.addColorStop(0, lighten(color, 110 + hitIntensity * 40));
+    body.addColorStop(0.3, lighten(color, 35));
+    body.addColorStop(0.7, color);
+    body.addColorStop(1, hexToRgba(color, 0.92));
+  } else {
+    body.addColorStop(0, lighten(color, 80 + hitIntensity * 40));
+    body.addColorStop(0.35, color);
+    body.addColorStop(1, color + "cc");
+  }
 
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, r);
@@ -177,28 +204,50 @@ function drawGemNote(
 
   ctx.shadowBlur = 0;
   const shine = ctx.createLinearGradient(x, y, x, y + h * 0.6);
-  shine.addColorStop(0, `rgba(255,255,255,${0.55 + hitIntensity * 0.35})`);
+  const shineAlpha = isCrystal ? 0.28 : 0.55 + hitIntensity * 0.35;
+  shine.addColorStop(0, `rgba(255,255,255,${shineAlpha + hitIntensity * 0.2})`);
   shine.addColorStop(1, "rgba(255,255,255,0)");
   ctx.beginPath();
   ctx.roundRect(x + 3, y + 2, w - 6, h * 0.45, r - 2);
   ctx.fillStyle = shine;
   ctx.fill();
 
-  if (strength === 2 || hitIntensity > 0.35) {
+  if (isCrystal) {
+    ctx.strokeStyle = hexToRgba(lighten(color, 60), 0.7);
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.stroke();
+  }
+
+  if (isBurning || hitIntensity > 0.35) {
+    ctx.shadowColor = isBurning ? "rgba(255, 150, 40, 0.95)" : color;
+    ctx.shadowBlur = isBurning ? 14 + hitIntensity * 28 : 0;
     ctx.strokeStyle =
       hitIntensity > 0.35
         ? `rgba(255,255,255,${0.35 + hitIntensity * 0.45})`
-        : "rgba(255,180,60,0.6)";
-    ctx.lineWidth = strength === 2 ? 1.5 : 1 + hitIntensity;
+        : isBurning
+          ? `rgba(255, 200, 90, ${0.82 + hitIntensity * 0.12})`
+          : "rgba(255,180,60,0.6)";
+    ctx.lineWidth = isBurning ? 2.25 : 1 + hitIntensity;
     ctx.beginPath();
     ctx.roundRect(x - 1, y - 1, w + 2, h + 2, r + 1);
     ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    if (isBurning) {
+      ctx.strokeStyle = hexToRgba(color, 0.3);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(x - 4, y - 4, w + 8, h + 8, r + 3);
+      ctx.stroke();
+    }
   }
 
   const dotR = Math.max(2.5, Math.min(w, h) * 0.13);
   ctx.beginPath();
   ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = isCrystal ? "rgba(255,255,255,0.55)" : "#ffffff";
   ctx.fill();
 
   if (hitIntensity > 0) {

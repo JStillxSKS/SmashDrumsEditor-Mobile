@@ -1,4 +1,5 @@
 const { downloadArtifact } = require("@electron/get");
+const { execFileSync } = require("node:child_process");
 const extract = require("extract-zip");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -27,6 +28,28 @@ function isInstalled() {
   }
 }
 
+async function extractElectronZip(zipPath) {
+  fs.rmSync(distDir, { recursive: true, force: true });
+  fs.mkdirSync(distDir, { recursive: true });
+
+  if (process.platform === "win32") {
+    const psZip = zipPath.replace(/'/g, "''");
+    const psDest = path.resolve(distDir).replace(/'/g, "''");
+    execFileSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        `Expand-Archive -LiteralPath '${psZip}' -DestinationPath '${psDest}' -Force`,
+      ],
+      { stdio: "inherit" }
+    );
+    return;
+  }
+
+  await extract(zipPath, { dir: path.resolve(distDir) });
+}
+
 async function main() {
   if (process.env.ELECTRON_SKIP_BINARY_DOWNLOAD || isInstalled()) return;
 
@@ -37,9 +60,7 @@ async function main() {
     arch: process.env.npm_config_arch || process.arch,
   });
 
-  fs.rmSync(distDir, { recursive: true, force: true });
-  fs.mkdirSync(distDir, { recursive: true });
-  await extract(zipPath, { dir: path.resolve(distDir) });
+  await extractElectronZip(zipPath);
   fs.writeFileSync(pathFile, platformPath);
   fs.writeFileSync(path.join(distDir, "version"), `v${version}`);
 }
