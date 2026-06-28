@@ -36,7 +36,7 @@ npm run desktop:dev
 - BPM editing, auto-detect, timing anchors, and song phases
 - Audio offset / silent lead-in
 - Import `.indies`, `meta.json`, or Clone Hero `.chart`
-- Export Smash Drums `.indies` packages or Clone Hero `notes.chart` + `song.ini`
+- Export Smash Drums `.indies` packages or Clone Hero `notes.chart` + `song.ini` to the `output/` folder (desktop app)
 
 ## Disclaimer
 

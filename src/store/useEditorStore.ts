@@ -16,8 +16,9 @@ import {
 } from "../types/meta";
 
 import { validateIndiesCharts } from "../utils/chartNotes";
-import { downloadChart, isChartFile, parseChartFile } from "../utils/chartIO";
-import { downloadSongIni } from "../utils/songIniIO";
+import { buildChartText, isChartFile, parseChartFile } from "../utils/chartIO";
+import { saveBlobFile, saveTextFile } from "../utils/fileSave";
+import { buildSongIni } from "../utils/songIniIO";
 import {
   chartsFromMeta,
   createEmptyMeta,
@@ -28,7 +29,6 @@ import {
 import { getSongOffset } from "../utils/offset";
 import {
   buildIndiesZip,
-  downloadIndiesPackage,
   parseIndiesFile,
   sanitizeIndiesFilename,
 } from "../utils/indiesIO";
@@ -447,7 +447,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         audioBuffer,
       });
       const base = sanitizeIndiesFilename(meta.NameSong || meta.NameArtist || "song");
-      downloadIndiesPackage(blob, `${base}.indies`);
+      const result = await saveBlobFile(`${base}.indies`, blob);
+      const where =
+        result.method === "disk" ? result.displayPath : `Downloads (${result.filename})`;
+      set({ clipboardMessage: `Exported ${where}` });
     } catch (err) {
       window.alert(
         err instanceof Error ? err.message : "Could not build .indies package."
@@ -455,7 +458,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
-  exportChart: () => {
+  exportChart: async () => {
     const { meta, charts, audioFileName, duration } = get();
     const issues = validateIndiesCharts(charts);
     if (issues.length > 0) {
@@ -463,10 +466,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return;
     }
     const built = prepareMetaForExport(meta, charts);
-    downloadChart(built, charts, audioFileName, undefined, duration);
-    window.setTimeout(() => {
-      downloadSongIni(built, charts, duration);
-    }, 300);
+    const base = sanitizeIndiesFilename(built.NameSong || built.NameArtist || "song");
+    try {
+      const chartResult = await saveTextFile(
+        `${base}/notes.chart`,
+        buildChartText(built, charts, audioFileName, duration)
+      );
+      const iniResult = await saveTextFile(
+        `${base}/song.ini`,
+        buildSongIni(built, charts, duration)
+      );
+      const where =
+        chartResult.method === "disk"
+          ? `output/${base}/`
+          : `${chartResult.method === "download" ? chartResult.filename : "notes.chart"} + ${iniResult.method === "download" ? iniResult.filename : "song.ini"}`;
+      set({ clipboardMessage: `Exported ${where}` });
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Could not export chart.");
+    }
   },
 
   toggleNote: (beat, id) => {

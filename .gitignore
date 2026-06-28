@@ -6,6 +6,10 @@ dist
 dist-ssr
 release
 
+# Exported songs (keep folder via output/.gitkeep)
+output/*
+!output/.gitkeep
+
 # Logs
 logs
 *.log

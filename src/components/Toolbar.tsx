@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useEditorStore } from "../store/useEditorStore";
+import { openOutputFolder } from "../utils/fileSave";
 import { seekChartTime, seekToStrikeBar } from "../utils/audioElement";
 import {
   activeSourceLabel,
@@ -363,9 +364,14 @@ export function Toolbar() {
         <button className="btn export-btn" onClick={() => void exportIndies()}>
           Export .indies
         </button>
-        <button className="btn" onClick={exportChart}>
+        <button className="btn" onClick={() => void exportChart()}>
           Export CH chart + song.ini
         </button>
+        {window.electronAPI?.isDesktop && (
+          <button className="btn" type="button" onClick={() => void openOutputFolder()}>
+            Open output
+          </button>
+        )}
       </div>
 
       <audio id="editor-audio" ref={audioRef} src={activeAudioUrl ?? undefined} />

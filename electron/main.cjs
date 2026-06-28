@@ -1,5 +1,7 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const fs = require("node:fs");
 const path = require("node:path");
+const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { getOutputRoot, resolveOutputPath, openOutputRoot } = require("./outputPath.cjs");
 const { startStaticServer } = require("./staticServer.cjs");
 
 const isDev = !app.isPackaged;
@@ -32,6 +34,7 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, "preload.cjs"),
     },
   });
 
@@ -46,6 +49,19 @@ function createWindow() {
     dialog.showErrorBox("Smash Drums Editor failed to load", String(err));
   });
 }
+
+ipcMain.handle("output:getDir", () => getOutputRoot());
+
+ipcMain.handle("output:open", () => openOutputRoot());
+
+ipcMain.handle("output:save", (_event, { relativePath, data, encoding }) => {
+  const fullPath = resolveOutputPath(relativePath);
+  const payload = encoding === "base64" ? Buffer.from(data, "base64") : String(data);
+  fs.writeFileSync(fullPath, payload);
+  const root = getOutputRoot();
+  const displayPath = path.relative(root, fullPath).split(path.sep).join("/");
+  return { path: fullPath, displayPath: `output/${displayPath}` };
+});
 
 app.whenReady().then(async () => {
   try {
