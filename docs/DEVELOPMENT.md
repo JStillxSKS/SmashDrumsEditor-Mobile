@@ -20,6 +20,15 @@ npm install
 
 `postinstall` runs `scripts/ensure-electron.cjs`, which downloads the Electron binary if missing.
 
+If `npm run desktop:dev` fails with *Electron failed to install correctly*:
+
+```bash
+npm approve-scripts electron
+node scripts/ensure-electron.cjs
+```
+
+On Windows, `ensure-electron.cjs` uses PowerShell `Expand-Archive` because the default zip extractor can leave an incomplete `node_modules/electron/dist`.
+
 ## Scripts
 
 | Command | Description |

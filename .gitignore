@@ -38,3 +38,7 @@ Desktop.ini
 
 # Windows shortcuts are generated locally via Install Launchers.bat
 *.lnk
+
+# Local upload / release helpers (not part of the app)
+upload-manifest.json
+github-push-*.json
