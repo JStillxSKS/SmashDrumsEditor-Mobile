@@ -62,3 +62,17 @@ export function seekScrollTick(scrollTick: number): void {
 export function seekToStrikeBar(): void {
   seekScrollTick(useEditorStore.getState().scrollTick);
 }
+
+/** After timing/offset edits: keep the strike bar on the same beat grid line. */
+export function resyncAfterTimingChange(): void {
+  const state = useEditorStore.getState();
+  if (state.isPlaying) {
+    const audio = getAudioElement();
+    const offset = getSongOffset(state.meta);
+    const chartTime =
+      audio && !audio.muted ? audio.currentTime + offset : state.currentTime;
+    seekChartTime(chartTime);
+    return;
+  }
+  seekScrollTick(state.scrollTick);
+}

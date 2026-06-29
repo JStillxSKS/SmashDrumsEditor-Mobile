@@ -1,7 +1,11 @@
 import { useEffect, useRef } from "react";
 import { useEditorStore } from "../store/useEditorStore";
 import { openOutputFolder } from "../utils/fileSave";
-import { seekChartTime, seekToStrikeBar } from "../utils/audioElement";
+import {
+  resyncAfterTimingChange,
+  seekChartTime,
+  seekToStrikeBar,
+} from "../utils/audioElement";
 import {
   activeSourceLabel,
   getActiveAudioUrl,
@@ -23,6 +27,7 @@ import {
 import { RESOLUTION, beatToTick, formatTick } from "../utils/resolution";
 import { bpmFromAnchors } from "../utils/timing";
 import { beatToTime, timeToBeat } from "../utils/timing";
+import { pickImportFileDesktop } from "../utils/importFile";
 
 export function Toolbar() {
   const {
@@ -134,7 +139,7 @@ export function Toolbar() {
   }, [activeAudioUrl, audioSource, playbackSpeed, songVolume]);
 
   useEffect(() => {
-    seekChartTime(useEditorStore.getState().currentTime);
+    resyncAfterTimingChange();
   }, [meta.SongOffsetSeconds, meta.SongTiming]);
 
   useEffect(() => {
@@ -346,22 +351,38 @@ export function Toolbar() {
             }}
           />
         </label>
-        <label
-          className="file-btn"
-          title="Import .indies, meta.json, or Clone Hero .chart"
-        >
-          📂 Import
-          <input
-            type="file"
-            accept=".indies,.json,.chart,application/json,application/zip"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void loadMeta(f);
-              e.target.value = "";
+        {window.electronAPI?.isDesktop ? (
+          <button
+            className="file-btn"
+            type="button"
+            title="Import .indies, .rlrr (Paradiddle), meta.json, or Clone Hero .chart"
+            onClick={() => {
+              void (async () => {
+                const file = await pickImportFileDesktop();
+                if (file) await loadMeta(file);
+              })();
             }}
-          />
-        </label>
+          >
+            📂 Import
+          </button>
+        ) : (
+          <label
+            className="file-btn"
+            title="Import .indies, .rlrr (Paradiddle), meta.json, or Clone Hero .chart"
+          >
+            📂 Import
+            <input
+              type="file"
+              accept=".indies,.rlrr,.json,.chart,application/json,application/zip"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void loadMeta(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
         <button
           className="btn export-btn"
           type="button"

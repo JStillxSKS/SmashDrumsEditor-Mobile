@@ -32,6 +32,9 @@ import {
   parseIndiesFile,
   sanitizeIndiesFilename,
 } from "../utils/indiesIO";
+import { importViewState } from "../utils/importView";
+import { isRlrrFile, parseRlrrFile } from "../utils/paradiddleIO";
+import { loadSiblingFile } from "../utils/siblingFile";
 import {
   FIXED_PIXELS_PER_TICK,
   beatToTick,
@@ -374,47 +377,117 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   loadMeta: async (file) => {
-    const indiesPackage = await parseIndiesFile(file);
-    if (indiesPackage) {
-      const { meta, charts, audioFile, coverFile } = indiesPackage;
-      set({
-        meta,
-        charts,
-        scrollTick: 0,
-        currentTime: 0,
-        isPlaying: false,
-      });
-      if (coverFile) {
-        await get().loadCoverImage(coverFile);
-      } else {
-        get().clearCoverImage();
+    try {
+      if (isRlrrFile(file)) {
+        const paradiddlePackage = await parseRlrrFile(file);
+        if (!paradiddlePackage) {
+          window.alert(
+            "Could not read this Paradiddle .rlrr file. The file may be corrupt or use an unsupported format.",
+          );
+          return;
+        }
+        const { meta, charts, audioFileName, coverFileName } = paradiddlePackage;
+        const view = importViewState(charts);
+        const noteCount = charts[view.difficulty].length;
+        set({
+          meta,
+          charts,
+          difficulty: view.difficulty,
+          scrollTick: view.scrollTick,
+          currentTime: 0,
+          isPlaying: false,
+          clipboardMessage: `Imported ${meta.NameSong} (${noteCount} notes)`,
+        });
+        if (coverFileName) {
+          const coverFile = await loadSiblingFile(file, coverFileName);
+          if (coverFile) {
+            await get().loadCoverImage(coverFile);
+          } else {
+            get().clearCoverImage();
+          }
+        } else {
+          get().clearCoverImage();
+        }
+        if (audioFileName) {
+          const audioFile = await loadSiblingFile(file, audioFileName);
+          if (audioFile) {
+            await get().loadAudio(audioFile);
+          } else {
+            set({
+              clipboardMessage: `Imported ${meta.NameSong} (${noteCount} notes) — use Song to load ${audioFileName} from the same folder.`,
+            });
+          }
+        }
+        const afterAudio = importViewState(get().charts);
+        set({
+          difficulty: afterAudio.difficulty,
+          scrollTick: afterAudio.scrollTick,
+          currentTime: 0,
+          isPlaying: false,
+        });
+        return;
       }
-      if (audioFile) {
-        await get().loadAudio(audioFile);
-      }
-      return;
-    }
 
-    const text = await file.text();
-    if (isChartFile(text)) {
-      const { meta, charts } = parseChartFile(text);
+      const indiesPackage = await parseIndiesFile(file);
+      if (indiesPackage) {
+        const { meta, charts, audioFile, coverFile } = indiesPackage;
+        const view = importViewState(charts);
+        set({
+          meta,
+          charts,
+          difficulty: view.difficulty,
+          scrollTick: view.scrollTick,
+          currentTime: 0,
+          isPlaying: false,
+        });
+        if (coverFile) {
+          await get().loadCoverImage(coverFile);
+        } else {
+          get().clearCoverImage();
+        }
+        if (audioFile) {
+          await get().loadAudio(audioFile);
+        }
+        const afterAudio = importViewState(get().charts);
+        set({
+          difficulty: afterAudio.difficulty,
+          scrollTick: afterAudio.scrollTick,
+          currentTime: 0,
+          isPlaying: false,
+        });
+        return;
+      }
+
+      const text = await file.text();
+      if (isChartFile(text)) {
+        const { meta, charts } = parseChartFile(text);
+        const view = importViewState(charts);
+        set({
+          meta,
+          charts,
+          difficulty: view.difficulty,
+          scrollTick: view.scrollTick,
+          currentTime: 0,
+          isPlaying: false,
+        });
+        return;
+      }
+      const meta = parseMetaJson(text);
+      const charts = chartsFromMeta(meta);
+      const view = importViewState(charts);
       set({
         meta,
         charts,
-        scrollTick: 0,
+        difficulty: view.difficulty,
+        scrollTick: view.scrollTick,
         currentTime: 0,
         isPlaying: false,
       });
-      return;
+    } catch (err) {
+      window.alert(
+        err instanceof Error ? err.message : "Could not import this file.",
+      );
     }
-    const meta = parseMetaJson(text);
-    set({
-      meta,
-      charts: chartsFromMeta(meta),
-      scrollTick: 0,
-      currentTime: 0,
-      isPlaying: false,
-    });
   },
 
   loadChart: async (file) => {

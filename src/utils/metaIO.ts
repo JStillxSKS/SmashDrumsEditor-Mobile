@@ -70,11 +70,19 @@ function bakeOffsetIntoTiming(
   const sorted = sortTimingAnchors(timing);
   if (sorted.length === 0) return [{ beat: 0, timer: offsetSeconds }];
 
-  const [first, ...rest] = sorted;
-  if (first.beat === 0) {
-    return [{ beat: 0, timer: offsetSeconds }, ...rest];
+  const prevOffset = sorted[0]?.beat === 0 ? sorted[0].timer : 0;
+  const delta = offsetSeconds - prevOffset;
+  const shifted = sorted.map((anchor) => ({
+    ...anchor,
+    timer: anchor.timer + delta,
+  }));
+
+  if (shifted[0].beat === 0) {
+    shifted[0] = { ...shifted[0], timer: offsetSeconds };
+    return shifted;
   }
-  return [{ beat: 0, timer: offsetSeconds }, ...sorted];
+
+  return [{ beat: 0, timer: offsetSeconds }, ...shifted];
 }
 
 export function withOffsetInTiming(
