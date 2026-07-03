@@ -49,3 +49,7 @@ github-push-*.json
 
 # Local-only dev files (not shipped in releases)
 .local/
+mcps/
+
+# One-off local chart scripts (hardcoded paths)
+scripts/align-undead-timing.mjs

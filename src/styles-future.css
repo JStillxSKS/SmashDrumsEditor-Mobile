@@ -250,6 +250,17 @@
   box-shadow: inset 1px 0 0 rgba(232, 38, 42, 0.08);
 }
 
+.app--future .drawer-toggle {
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  border-color: rgba(255, 184, 0, 0.35);
+  font-family: var(--font-display);
+}
+
+.app--future .drawer-toggle:hover {
+  border-color: var(--accent-2);
+  box-shadow: 0 0 20px rgba(232, 38, 42, 0.2);
+}
+
 .app--future .hud-panel {
   position: relative;
   background: var(--bg-panel) !important;
