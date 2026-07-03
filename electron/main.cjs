@@ -1,7 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
-const { getOutputRoot, resolveOutputPath, openOutputRoot } = require("./outputPath.cjs");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const {
+  getOutputRoot,
+  ensureOutputRoot,
+  resolveOutputPath,
+  openOutputRoot,
+  isTempPath,
+} = require("./outputPath.cjs");
 const { startStaticServer } = require("./staticServer.cjs");
 
 const isDev = !app.isPackaged;
@@ -50,9 +56,66 @@ function createWindow() {
   });
 }
 
+ipcMain.handle("shell:openExternal", (_event, url) => {
+  const target = String(url);
+  if (!/^https?:\/\//i.test(target)) {
+    throw new Error("Only http(s) URLs can be opened externally");
+  }
+  return shell.openExternal(target);
+});
+
 ipcMain.handle("output:getDir", () => getOutputRoot());
 
 ipcMain.handle("output:open", () => openOutputRoot());
+
+ipcMain.handle("import:pickFile", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: "Import chart",
+    properties: ["openFile"],
+    filters: [
+      {
+        name: "Smash Drums / Paradiddle / Clone Hero",
+        extensions: ["indies", "rlrr", "json", "chart"],
+      },
+      { name: "All files", extensions: ["*"] },
+    ],
+  });
+  if (canceled || !filePaths?.[0]) return null;
+
+  const filePath = filePaths[0];
+  const data = fs.readFileSync(filePath);
+  return {
+    path: filePath,
+    name: path.basename(filePath),
+    bytes: Array.from(data),
+  };
+});
+
+ipcMain.handle("fs:readSibling", (_event, { sourceFilePath, siblingName }) => {
+  const dir = path.dirname(sourceFilePath);
+  const safeName = path.basename(String(siblingName));
+  const fullPath = path.join(dir, safeName);
+  if (!fs.existsSync(fullPath)) return null;
+
+  const ext = path.extname(safeName).toLowerCase();
+  const mimeByExt = {
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+  };
+
+  const data = fs.readFileSync(fullPath);
+  return {
+    name: safeName,
+    bytes: Array.from(data),
+    mimeType: mimeByExt[ext] ?? "application/octet-stream",
+  };
+});
 
 ipcMain.handle("output:save", (_event, { relativePath, data, encoding }) => {
   const fullPath = resolveOutputPath(relativePath);
@@ -65,6 +128,49 @@ ipcMain.handle("output:saveBinary", (_event, { relativePath, bytes }) => {
   const fullPath = resolveOutputPath(relativePath);
   fs.writeFileSync(fullPath, Buffer.from(bytes));
   return { path: fullPath, displayPath: fullPath };
+});
+
+ipcMain.handle("file:saveBinary", (_event, { absolutePath, bytes }) => {
+  const target = path.normalize(String(absolutePath));
+  if (!path.isAbsolute(target)) {
+    throw new Error("Refusing to save outside an absolute path");
+  }
+  if (isTempPath(target)) {
+    throw new Error("Refusing to save exports to a temp folder");
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, Buffer.from(bytes));
+  return { path: target, displayPath: target };
+});
+
+ipcMain.handle("output:backupIfExists", (_event, { relativePath }) => {
+  const fullPath = resolveOutputPath(relativePath);
+  if (!fs.existsSync(fullPath)) return { backedUp: false };
+  const bak = `${fullPath}.bak`;
+  fs.copyFileSync(fullPath, bak);
+  return { backedUp: true, path: bak };
+});
+
+ipcMain.handle("output:readBinary", (_event, { relativePath }) => {
+  const fullPath = resolveOutputPath(relativePath);
+  if (!fs.existsSync(fullPath)) return null;
+  return Array.from(fs.readFileSync(fullPath));
+});
+
+ipcMain.handle("output:listRecovery", () => {
+  const root = ensureOutputRoot();
+  return fs
+    .readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .filter(
+      (entry) =>
+        entry.name.endsWith(".autosave.indies") || entry.name.endsWith(".indies.bak")
+    )
+    .map((entry) => {
+      const full = path.join(root, entry.name);
+      return { name: entry.name, path: full, mtime: fs.statSync(full).mtimeMs };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
 });
 
 app.whenReady().then(async () => {

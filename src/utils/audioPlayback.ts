@@ -24,6 +24,16 @@ export function syncAudioVolume(
   audio.volume = Math.max(0, Math.min(1, volume));
 }
 
+let seekGeneration = 0;
+let playGeneration = 0;
+let playChain: Promise<void> = Promise.resolve();
+
+/** Invalidate in-flight seek/play work (call on pause). */
+export function cancelPendingAudioPlayback(): void {
+  seekGeneration++;
+  playGeneration++;
+}
+
 /** Wait until the media element has seeked (Electron often starts play before seek lands). */
 export function waitForAudioSeek(
   audio: HTMLAudioElement,
@@ -33,6 +43,8 @@ export function waitForAudioSeek(
   if (Math.abs(audio.currentTime - target) < 0.002) {
     return Promise.resolve();
   }
+
+  ++seekGeneration;
 
   return new Promise((resolve) => {
     let settled = false;
@@ -53,15 +65,29 @@ export async function playEditorAudioAt(
   audio: HTMLAudioElement,
   audioTime: number
 ): Promise<void> {
-  await waitForAudioSeek(audio, audioTime);
-  try {
-    await audio.play();
-  } catch {
-    await new Promise((r) => window.setTimeout(r, 50));
+  const gen = ++playGeneration;
+
+  playChain = playChain.then(async () => {
+    if (gen !== playGeneration) return;
+
+    await waitForAudioSeek(audio, audioTime);
+    if (gen !== playGeneration) return;
+
+    if (!audio.paused) return;
+
     try {
       await audio.play();
     } catch {
-      // Autoplay blocked — chart clock still advances through silent lead-in.
+      if (gen !== playGeneration) return;
+      await new Promise((r) => window.setTimeout(r, 50));
+      if (gen !== playGeneration) return;
+      try {
+        await audio.play();
+      } catch {
+        // Autoplay blocked — chart clock still advances through silent lead-in.
+      }
     }
-  }
+  });
+
+  await playChain;
 }

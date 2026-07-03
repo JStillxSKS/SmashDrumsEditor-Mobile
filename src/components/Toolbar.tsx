@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PublishModal } from "./PublishModal";
 import { useEditorStore } from "../store/useEditorStore";
 import { openOutputFolder } from "../utils/fileSave";
 import {
@@ -9,9 +10,9 @@ import {
 import {
   activeSourceLabel,
   getActiveAudioUrl,
-  getActiveDuration,
 } from "../utils/audioSource";
 import {
+  cancelPendingAudioPlayback,
   playEditorAudioAt,
   syncAudioPlaybackRate,
   syncAudioVolume,
@@ -27,8 +28,11 @@ import {
 import { RESOLUTION, beatToTick, formatTick } from "../utils/resolution";
 import { bpmFromAnchors } from "../utils/timing";
 import { beatToTime, timeToBeat } from "../utils/timing";
+import { pickImportFileDesktop } from "../utils/importFile";
+import { redoDepth, undoDepth } from "../store/history";
 
 export function Toolbar() {
+  const [publishOpen, setPublishOpen] = useState(false);
   const {
     audioUrl,
     drumsAudioUrl,
@@ -44,10 +48,11 @@ export function Toolbar() {
     loadMeta,
     exportIndies,
     exportingIndies,
+    publishingIndies,
+    sourceIndiesPath,
     exportChart,
     setCurrentTime,
     setIsPlaying,
-    setScrollTick,
     setAudioSource,
     nudgeOffset,
     goToChartStart,
@@ -58,11 +63,15 @@ export function Toolbar() {
     bpmConfidence,
     setBpm,
     detectBpmFromAudio,
+    historyVersion,
+    undo,
+    redo,
   } = useEditorStore();
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const rafRef = useRef(0);
   const lastFrameRef = useRef(0);
+  const silentAudioStartedRef = useRef(false);
 
   const activeAudioUrl = getActiveAudioUrl({
     audioSource,
@@ -83,18 +92,17 @@ export function Toolbar() {
     const audio = audioRef.current;
     if (!audio || !activeAudioUrl) return;
     if (isPlaying) {
+      cancelPendingAudioPlayback();
       audio.pause();
-      const pausedChart =
-        !audio.muted ? audio.currentTime + getSongOffset(meta) : chartTime;
-      setCurrentTime(pausedChart);
-      const beat = timeToBeat(pausedChart, meta.SongTiming);
-      setScrollTick(beat * RESOLUTION);
+      seekChartTime(useEditorStore.getState().currentTime);
+      silentAudioStartedRef.current = false;
       setIsPlaying(false);
     } else {
       seekToStrikeBar();
       const { currentTime: strikeChartTime, meta: m } = useEditorStore.getState();
       const off = getSongOffset(m);
       const silent = isInSilentLeadIn(strikeChartTime, off);
+      silentAudioStartedRef.current = false;
       if (silent) {
         audio.muted = true;
         void waitForAudioSeek(audio, 0);
@@ -163,12 +171,12 @@ export function Toolbar() {
     if (!audio) return;
 
     lastFrameRef.current = performance.now();
+    silentAudioStartedRef.current = false;
 
     const loop = () => {
       const state = useEditorStore.getState();
       const { currentTime: ct, meta: m, isPlaying: playing } = state;
       const off = getSongOffset(m);
-      const dur = getActiveDuration(state);
 
       if (!playing) return;
 
@@ -180,15 +188,13 @@ export function Toolbar() {
         const next = ct + dt * speed;
         setCurrentTime(next);
 
-        if (next >= off) {
+        if (next >= off && !silentAudioStartedRef.current) {
+          silentAudioStartedRef.current = true;
           audio.muted = false;
           void playEditorAudioAt(audio, 0);
         }
       } else if (!audio.paused && !audio.muted) {
         setCurrentTime(audio.currentTime + off);
-      } else if (audio.paused && ct - off < dur) {
-        audio.muted = false;
-        void playEditorAudioAt(audio, chartToAudioTime(ct, off));
       }
 
       rafRef.current = requestAnimationFrame(loop);
@@ -210,6 +216,18 @@ export function Toolbar() {
       } else if (e.key === "]") {
         e.preventDefault();
         nudgeOffset(offsetFromMs(OFFSET_NUDGE_FINE_MS));
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void exportIndies();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key.toLowerCase() === "y" || (e.key.toLowerCase() === "z" && e.shiftKey))
+      ) {
+        e.preventDefault();
+        redo();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -224,7 +242,10 @@ export function Toolbar() {
   };
 
   const tick = isPlaying ? beatToTick(timeToBeat(chartTime, meta.SongTiming)) : scrollTick;
-  const bpm = Math.round(bpmFromAnchors(meta.SongTiming) * 10) / 10;
+  const bpm = bpmFromAnchors(meta.SongTiming);
+  void historyVersion;
+  const canUndo = undoDepth() > 0;
+  const canRedo = redoDepth() > 0;
 
   return (
     <header className="toolbar">
@@ -243,6 +264,26 @@ export function Toolbar() {
       </div>
 
       <div className="toolbar-center">
+        <div className="btn-group btn-group-tight history-btns">
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={!canUndo}
+            title="Undo (Ctrl+Z)"
+            onClick={undo}
+          >
+            ↶
+          </button>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={!canRedo}
+            title="Redo (Ctrl+Y)"
+            onClick={redo}
+          >
+            ↷
+          </button>
+        </div>
         <button className="btn play-btn" onClick={togglePlay} disabled={!canPlay} title="Play / Pause (Space)">
           {isPlaying ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -309,7 +350,7 @@ export function Toolbar() {
               type="number"
               min={40}
               max={300}
-              step={0.1}
+              step={1}
               value={bpm}
               onChange={(e) => setBpm(Number(e.target.value))}
             />
@@ -350,29 +391,63 @@ export function Toolbar() {
             }}
           />
         </label>
-        <label
-          className="file-btn"
-          title="Import .indies, meta.json, or Clone Hero .chart"
-        >
-          📂 Import
-          <input
-            type="file"
-            accept=".indies,.json,.chart,application/json,application/zip"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void loadMeta(f);
-              e.target.value = "";
+        {window.electronAPI?.isDesktop ? (
+          <button
+            className="file-btn"
+            type="button"
+            title="Import .indies, .rlrr (Paradiddle), meta.json, or Clone Hero .chart"
+            onClick={() => {
+              void (async () => {
+                const file = await pickImportFileDesktop();
+                if (file) await loadMeta(file);
+              })();
             }}
-          />
-        </label>
+          >
+            📂 Import
+          </button>
+        ) : (
+          <label
+            className="file-btn"
+            title="Import .indies, .rlrr (Paradiddle), meta.json, or Clone Hero .chart"
+          >
+            📂 Import
+            <input
+              type="file"
+              accept=".indies,.rlrr,.json,.chart,application/json,application/zip"
+              hidden
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void loadMeta(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+        )}
         <button
           className="btn export-btn"
           type="button"
-          disabled={exportingIndies}
+          disabled={exportingIndies || publishingIndies}
+          title={
+            sourceIndiesPath
+              ? `Save to output folder (Ctrl+S):\n${sourceIndiesPath}`
+              : "Save to Desktop\\Smash Drums Editor\\output (Ctrl+S)"
+          }
           onClick={() => void exportIndies()}
         >
-          {exportingIndies ? "Exporting…" : "Export .indies"}
+          {exportingIndies ? "Saving…" : "Save .indies"}
+        </button>
+        <button
+          className="btn publish-toolbar-btn"
+          type="button"
+          disabled={exportingIndies || publishingIndies || !canPlay}
+          title={
+            meta.IndiesDbMapId
+              ? "Update this map on Indies-DB"
+              : "Publish to Indies-DB (indies-db.vercel.app)"
+          }
+          onClick={() => setPublishOpen(true)}
+        >
+          {publishingIndies ? "Publishing…" : meta.IndiesDbMapId ? "Update Indies-DB" : "Publish"}
         </button>
         <button className="btn" onClick={() => void exportChart()}>
           Export CH chart + song.ini
@@ -385,6 +460,7 @@ export function Toolbar() {
       </div>
 
       <audio id="editor-audio" ref={audioRef} src={activeAudioUrl ?? undefined} />
+      <PublishModal open={publishOpen} onClose={() => setPublishOpen(false)} />
     </header>
   );
 }

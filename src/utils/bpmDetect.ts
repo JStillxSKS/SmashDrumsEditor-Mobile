@@ -1,3 +1,5 @@
+import { normalizeSongBpm } from "./timing";
+
 export type BpmResult = {
   bpm: number;
   confidence: number;
@@ -15,7 +17,7 @@ export function detectBpm(buffer: AudioBuffer): BpmResult {
   const fps = 100;
   const frameSize = Math.floor(sampleRate / fps);
   const frames = Math.floor(maxLen / frameSize);
-  if (frames < fps * 4) return { bpm: 120, confidence: 0 };
+  if (frames < fps * 4) return { bpm: normalizeSongBpm(120), confidence: 0 };
 
   const envelope = new Float32Array(frames);
   for (let f = 0; f < frames; f++) {
@@ -51,17 +53,17 @@ export function detectBpm(buffer: AudioBuffer): BpmResult {
 
   scores.sort((a, b) => b.score - a.score);
   const best = scores[0];
-  if (!best || best.score <= 0) return { bpm: 120, confidence: 0 };
+  if (!best || best.score <= 0) return { bpm: normalizeSongBpm(120), confidence: 0 };
 
-  let bpm = (60 * fps) / best.lag;
+  const rawBpm = (60 * fps) / best.lag;
 
-  // Resolve half/double tempo ambiguities using top candidates
+  // Resolve half/double tempo ambiguities — compare whole-number BPM only
   const candidates = new Set<number>();
   for (const { lag } of scores.slice(0, 8)) {
     let b = (60 * fps) / lag;
     while (b < 75) b *= 2;
     while (b > 190) b /= 2;
-    candidates.add(Math.round(b * 10) / 10);
+    candidates.add(normalizeSongBpm(b));
   }
 
   const ranked = [...candidates].map((b) => {
@@ -76,12 +78,12 @@ export function detectBpm(buffer: AudioBuffer): BpmResult {
   });
   ranked.sort((a, b) => b.score - a.score);
 
-  const pick = ranked[0] ?? { bpm, score: best.score };
+  const pick = ranked[0] ?? { bpm: normalizeSongBpm(rawBpm), score: best.score };
   const maxScore = scores[0].score;
   const confidence = maxScore > 0 ? Math.min(1, pick.score / maxScore) : 0;
 
   return {
-    bpm: Math.round(pick.bpm * 10) / 10,
+    bpm: normalizeSongBpm(pick.bpm),
     confidence: Math.round(confidence * 100) / 100,
   };
 }

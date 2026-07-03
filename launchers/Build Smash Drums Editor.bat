@@ -18,13 +18,16 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if exist "%RELEASE%\Smash-Drums-Editor-0.1.0-portable.exe" (
+for /f "delims=" %%V in ('node -p "require('./package.json').version"') do set "VERSION=%%V"
+set "EXE=%RELEASE%\Smash-Drums-Editor-%VERSION%-portable.exe"
+
+if exist "%EXE%" (
   echo.
   echo Done:
-  echo %RELEASE%\Smash-Drums-Editor-0.1.0-portable.exe
+  echo %EXE%
 ) else (
   echo.
-  echo Build finished but portable EXE was not found in:
-  echo %RELEASE%
+  echo Build finished but portable EXE was not found:
+  echo %EXE%
 )
 pause

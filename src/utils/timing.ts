@@ -58,11 +58,18 @@ export function bpmFromAnchors(anchors: TimingAnchor[]): number {
   const span = sorted[1].timer - sorted[0].timer;
   const beats = sorted[1].beat - sorted[0].beat;
   if (span <= 0 || beats <= 0) return 120;
-  return (beats / span) * 60;
+  return normalizeSongBpm((beats / span) * 60);
+}
+
+/** Whole-number song BPM (40–300), matching the toolbar field. */
+export function normalizeSongBpm(bpm: number): number {
+  if (!Number.isFinite(bpm)) return 120;
+  return Math.round(Math.max(40, Math.min(300, bpm)));
 }
 
 export function anchorsFromBpm(bpm: number): TimingAnchor[] {
-  const spb = 60 / bpm;
+  const whole = normalizeSongBpm(bpm);
+  const spb = 60 / whole;
   return [
     { beat: 0, timer: 0 },
     { beat: 4, timer: 4 * spb },

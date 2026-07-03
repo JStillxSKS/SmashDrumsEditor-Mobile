@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { DIFFICULTIES, STRENGTHS } from "../types/meta";
 import { useEditorStore } from "../store/useEditorStore";
 import { extremeChartRequired } from "../utils/chartNotes";
+import { computeChartStats } from "../utils/chartStats";
 import { seekChartTime } from "../utils/audioElement";
 import {
   getSongOffset,
@@ -34,12 +35,19 @@ export function SidebarLeft() {
     coverImageFileName,
     loadCoverImage,
     clearCoverImage,
+    duration,
+    generateLowerDifficultiesFromExtreme,
   } = useEditorStore();
 
   const offset = getSongOffset(meta);
   const offsetMs = offsetToMs(offset);
   const noteCount = charts[difficulty].length;
   const diffLabel = DIFFICULTIES.find((d) => d.key === difficulty)?.label;
+  const stats = useMemo(
+    () => computeChartStats(charts, meta, duration),
+    [charts, meta, duration]
+  );
+  const activeStats = stats[difficulty];
   const songBadge =
     meta.NameSong?.trim() ||
     meta.NameArtist?.trim() ||
@@ -137,6 +145,19 @@ export function SidebarLeft() {
             {noteCount} notes · {diffLabel}
             {!extremeChartRequired(charts) && " · Extreme required"}
           </p>
+          <button
+            type="button"
+            className="btn btn-accent"
+            style={{ width: "100%", marginTop: "0.5rem" }}
+            disabled={!extremeChartRequired(charts)}
+            title="Generate Easy, Normal, and Hard from your Extreme chart (Moonscraper-style)"
+            onClick={() => generateLowerDifficultiesFromExtreme()}
+          >
+            Auto-chart lower difficulties
+          </button>
+          <p className="hint hint-inline">
+            Empty difficulties are also filled automatically when you save.
+          </p>
         </div>
 
         <div className="panel-section">
@@ -156,9 +177,48 @@ export function SidebarLeft() {
         </div>
       </CollapsibleSection>
 
+      <CollapsibleSection
+        title="Chart stats"
+        badge={activeStats.noteCount > 0 ? `${activeStats.nps} NPS` : "—"}
+        defaultOpen={false}
+      >
+        <p className="hint hint-inline">
+          {diffLabel}: <strong>{activeStats.noteCount}</strong> notes
+          {activeStats.noteCount > 0 && (
+            <>
+              {" "}
+              · <strong>{activeStats.nps}</strong> notes/sec
+              {activeStats.peakMeasureNotes > 0 && (
+                <>
+                  {" "}
+                  · peak M{activeStats.peakMeasure} ({activeStats.peakMeasureNotes} notes)
+                </>
+              )}
+            </>
+          )}
+        </p>
+        <ul className="stats-diff-list">
+          {DIFFICULTIES.map((d) => {
+            const s = stats[d.key];
+            return (
+              <li key={d.key} className={difficulty === d.key ? "is-active" : ""}>
+                <span>{d.label}</span>
+                <span>
+                  {s.noteCount} notes{s.noteCount > 0 ? ` · ${s.nps} NPS` : ""}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </CollapsibleSection>
+
       <CollapsibleSection title="Offset" badge={`${offsetMs} ms`} defaultOpen>
         <p className="hint offset-summary">
           Silent <strong>{offsetMs} ms</strong> before audio
+        </p>
+        <p className="hint hint-inline">
+          Smash Drums won&apos;t show notes until audio starts — use lead-in so your first hits
+          line up with the music, not beat 0.
         </p>
         <label>
           Lead-in (ms)

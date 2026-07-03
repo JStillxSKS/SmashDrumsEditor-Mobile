@@ -33,15 +33,35 @@ export async function saveTextFile(
 
 export async function saveBlobFile(
   relativePath: string,
-  blob: Blob
+  blob: Blob,
+  options?: { backup?: boolean }
 ): Promise<SaveResult> {
   const api = window.electronAPI;
   if (api?.isDesktop) {
+    if (options?.backup && api.backupOutputIfExists) {
+      await api.backupOutputIfExists(relativePath);
+    }
     const buffer = await blob.arrayBuffer();
     const saved = await api.saveBinaryFile(relativePath, new Uint8Array(buffer));
     return { method: "disk", path: saved.path, displayPath: saved.displayPath };
   }
   const filename = relativePath.split(/[/\\]/).pop() ?? relativePath;
+  triggerDownload(blob, filename);
+  return { method: "download", filename };
+}
+
+/** Overwrite an existing file at an absolute path (desktop app only). */
+export async function saveBlobToAbsolutePath(
+  absolutePath: string,
+  blob: Blob
+): Promise<SaveResult> {
+  const api = window.electronAPI;
+  if (api?.isDesktop) {
+    const buffer = await blob.arrayBuffer();
+    const saved = await api.saveBinaryToPath(absolutePath, new Uint8Array(buffer));
+    return { method: "disk", path: saved.path, displayPath: saved.displayPath };
+  }
+  const filename = absolutePath.split(/[/\\]/).pop() ?? "song.indies";
   triggerDownload(blob, filename);
   return { method: "download", filename };
 }

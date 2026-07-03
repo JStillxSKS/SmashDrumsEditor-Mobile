@@ -1037,9 +1037,9 @@ export function ChartEditor() {
         const state = useEditorStore.getState();
         if (state.isPlaying) return;
         e.preventDefault();
-        const { scrollTick: st, snapTicks: snap, setScrollTick } = state;
+        const { scrollTick: st, snapTicks: snap } = state;
         const delta = e.key === "ArrowUp" ? snap : -snap;
-        setScrollTick(snapTick(st + delta, snap));
+        seekScrollTick(snapTick(st + delta, snap));
         return;
       }
       if (e.key >= "1" && e.key <= "6") {

@@ -5,10 +5,12 @@ export const OFFSET_NUDGE_FINE_MS = 10;
 export const OFFSET_NUDGE_COARSE_MS = 100;
 
 /**
- * Silent lead-in before beat 0 hits — may live in SongTiming[0].timer (Indies/meta)
- * or [Song].Offset (Clone Hero .chart). Use the larger value when both are present.
+ * Seconds of chart time before audio begins.
+ * In the editor, SongOffsetSeconds is authoritative and SongTiming[0].timer stays at 0.
+ * Imported/exported Indies packs may bake offset into SongTiming[0].timer instead.
  */
 export function getSongOffset(meta: Pick<MetaJson, "SongOffsetSeconds" | "SongTiming">): number {
+  if (meta.SongOffsetSeconds > 0) return meta.SongOffsetSeconds;
   const sorted = sortTimingAnchors(meta.SongTiming);
   const first = sorted[0];
   const timingOffset = first?.beat === 0 ? first.timer : 0;

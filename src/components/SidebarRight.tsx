@@ -159,6 +159,8 @@ export function SidebarRight() {
           <li><kbd>Del</kbd><span className="control-label">Delete selected notes</span></li>
           <li><kbd>Ctrl+C</kbd><span className="control-label">Copy all visible notes</span></li>
           <li><kbd>Ctrl+V</kbd><span className="control-label">Paste — first note at strike bar</span></li>
+          <li><kbd>Ctrl+Z</kbd><span className="control-label">Undo</span></li>
+          <li><kbd>Ctrl+Y</kbd><span className="control-label">Redo</span></li>
           <li><kbd>Esc</kbd><span className="control-label">Cancel place</span></li>
           <li><kbd>← →</kbd><span className="control-label">Seek snap</span></li>
           <li><kbd>↑ ↓</kbd><span className="control-label">Pan snap</span></li>

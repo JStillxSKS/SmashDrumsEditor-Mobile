@@ -95,6 +95,8 @@ export type MetaJson = {
   NameArtist: string;
   NameSong: string;
   NameCharter: string;
+  /** Optional Indies-DB map UUID — enables score mod auto-linking */
+  IndiesDbMapId?: string;
   FilePath: string;
   SongOffsetSeconds: number;
   SongTiming: TimingAnchor[];

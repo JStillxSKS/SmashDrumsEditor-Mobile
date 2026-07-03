@@ -68,6 +68,7 @@ function bakeOffsetIntoTiming(
   offsetSeconds: number
 ): TimingAnchor[] {
   const sorted = sortTimingAnchors(timing);
+  if (offsetSeconds <= 0) return sorted;
   if (sorted.length === 0) return [{ beat: 0, timer: offsetSeconds }];
 
   const prevOffset = sorted[0]?.beat === 0 ? sorted[0].timer : 0;
@@ -83,6 +84,26 @@ function bakeOffsetIntoTiming(
   }
 
   return [{ beat: 0, timer: offsetSeconds }, ...shifted];
+}
+
+/** Editor timeline: beat 0 stays at timer 0; offset lives in SongOffsetSeconds. */
+export function unbakeOffsetFromTiming(
+  timing: TimingAnchor[],
+  offsetSeconds: number
+): TimingAnchor[] {
+  const sorted = sortTimingAnchors(timing);
+  if (offsetSeconds <= 0) return sorted;
+
+  const shifted = sorted.map((anchor) => ({
+    ...anchor,
+    timer: Math.max(0, Math.round((anchor.timer - offsetSeconds) * 1_000_000) / 1_000_000),
+  }));
+
+  if (shifted[0]?.beat === 0) {
+    shifted[0] = { ...shifted[0], timer: 0 };
+  }
+
+  return shifted;
 }
 
 export function withOffsetInTiming(
@@ -134,9 +155,10 @@ export function parseMetaJson(raw: string): MetaJson {
     NameArtist: data.NameArtist ?? base.NameArtist,
     NameSong: data.NameSong ?? base.NameSong,
     NameCharter: data.NameCharter ?? base.NameCharter,
+    IndiesDbMapId: data.IndiesDbMapId?.trim() || undefined,
     FilePath: data.FilePath ?? "",
     SongOffsetSeconds: songOffset,
-    SongTiming: bakeOffsetIntoTiming(timing, songOffset),
+    SongTiming: unbakeOffsetFromTiming(timing, songOffset),
     SongPhases:
       data.SongPhases && data.SongPhases.length >= 1
         ? sortSongPhases(data.SongPhases.map(normalizeSongPhase))

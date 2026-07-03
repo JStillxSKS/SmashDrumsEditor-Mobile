@@ -16,22 +16,37 @@ import {
 } from "../types/meta";
 
 import { validateIndiesCharts } from "../utils/chartNotes";
+import { chartsWithAutoDownchart, generateLowerDifficulties } from "../utils/downchart";
 import { buildChartText, isChartFile, parseChartFile } from "../utils/chartIO";
-import { openOutputFolder, saveBlobFile, saveTextFile } from "../utils/fileSave";
+import {
+  fileSystemPath,
+  isOutputFolderPath,
+  joinOutputPath,
+} from "../utils/fileSystemPath";
+import {
+  getOutputFolder,
+  openOutputFolder,
+  saveBlobFile,
+  saveTextFile,
+} from "../utils/fileSave";
 import { buildSongIni } from "../utils/songIniIO";
 import {
   chartsFromMeta,
   createEmptyMeta,
   parseMetaJson,
   prepareMetaForExport,
-  withOffsetInTiming,
 } from "../utils/metaIO";
-import { getSongOffset } from "../utils/offset";
+import { seekChartTime } from "../utils/audioElement";
+import { publishIndiesPackage, type PublishResult } from "../lib/indiesDbPublish";
+import { supabase } from "../lib/supabase";
 import {
   buildIndiesZip,
   parseIndiesFile,
   sanitizeIndiesFilename,
 } from "../utils/indiesIO";
+import { importViewState } from "../utils/importView";
+import { isRlrrFile, parseRlrrFile } from "../utils/paradiddleIO";
+import { loadSiblingFile } from "../utils/siblingFile";
 import {
   FIXED_PIXELS_PER_TICK,
   beatToTick,
@@ -65,6 +80,14 @@ import {
   sortTimingAnchors,
   timeToBeat,
 } from "../utils/timing";
+import {
+  clearHistory,
+  commitHistory,
+  extractSnapshot,
+  redo as historyRedo,
+  undo as historyUndo,
+  type HistoryTag,
+} from "./history";
 
 type EditorState = {
   meta: MetaJson;
@@ -105,7 +128,14 @@ type EditorState = {
   noteClipboard: NoteClipboardPayload | null;
   clipboardMessage: string | null;
   exportingIndies: boolean;
+  publishingIndies: boolean;
+  /** Desktop: target .indies path in the output folder. */
+  sourceIndiesPath: string | null;
+  /** Bumped when undo/redo stack changes — subscribe for toolbar hints */
+  historyVersion: number;
 
+  undo: () => void;
+  redo: () => void;
   setMetaField: <K extends keyof MetaJson>(key: K, value: MetaJson[K]) => void;
   setBpm: (bpm: number) => void;
   detectBpmFromAudio: () => Promise<number | null>;
@@ -133,7 +163,9 @@ type EditorState = {
   loadMeta: (file: File) => Promise<void>;
   loadChart: (file: File) => Promise<void>;
   exportIndies: () => Promise<void>;
+  publishToIndiesDb: () => Promise<PublishResult>;
   exportChart: () => void;
+  generateLowerDifficultiesFromExtreme: (force?: boolean) => void;
   toggleNote: (beat: number, id: 0 | 1 | 2 | 3 | 4 | 5) => void;
   removeNote: (beat: number, id: 0 | 1 | 2 | 3 | 4 | 5) => void;
   getActiveNotes: () => ChartNote[];
@@ -167,10 +199,30 @@ type EditorState = {
 };
 
 const audioContext = new AudioContext();
+const initialMeta = createEmptyMeta();
+const initialCharts = { easy: [], normal: [], hard: [], extreme: [] } as Record<
+  Difficulty,
+  ChartNote[]
+>;
+function bumpHistoryVersion(version: number, changed: boolean): number {
+  return changed ? version + 1 : version;
+}
 
-export const useEditorStore = create<EditorState>((set, get) => ({
-  meta: createEmptyMeta(),
-  charts: { easy: [], normal: [], hard: [], extreme: [] },
+export const useEditorStore = create<EditorState>((set, get) => {
+  const recordHistory = (tag: HistoryTag) => {
+    const state = get();
+    const changed = commitHistory(extractSnapshot(state), tag);
+    if (changed) set({ historyVersion: bumpHistoryVersion(state.historyVersion, true) });
+  };
+
+  const resetHistoryStack = () => {
+    clearHistory();
+    set({ historyVersion: get().historyVersion + 1 });
+  };
+
+  return {
+  meta: initialMeta,
+  charts: initialCharts,
   difficulty: "extreme",
   selectedLane: 1,
   strength: 1,
@@ -207,21 +259,65 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   noteClipboard: null,
   clipboardMessage: null,
   exportingIndies: false,
+  publishingIndies: false,
+  sourceIndiesPath: null,
+  historyVersion: 0,
 
-  setMetaField: (key, value) =>
-    set((s) => ({ meta: { ...s.meta, [key]: value } })),
+  undo: () => {
+    const state = get();
+    const restored = historyUndo(extractSnapshot(state));
+    if (!restored) return;
+    set({
+      meta: restored.meta,
+      charts: restored.charts,
+      historyVersion: state.historyVersion + 1,
+    });
+  },
 
-  setBpm: (bpm) =>
+  redo: () => {
+    const state = get();
+    const restored = historyRedo(extractSnapshot(state));
+    if (!restored) return;
+    set({
+      meta: restored.meta,
+      charts: restored.charts,
+      historyVersion: state.historyVersion + 1,
+    });
+  },
+
+  setMetaField: (key, value) => {
+    recordHistory("meta");
+    set((s) => ({ meta: { ...s.meta, [key]: value } }));
+  },
+
+  setBpm: (bpm) => {
+    recordHistory("timing");
     set((s) => {
-      const offset = getSongOffset(s.meta);
+      const sorted = sortTimingAnchors(s.meta.SongTiming);
+      const endBeat =
+        sorted.length > 2
+          ? sorted[sorted.length - 1].beat
+          : Math.max(
+              ...Object.values(s.charts).flatMap((notes) => notes.map((n) => n.Beat)),
+              4
+            );
+      const base = anchorsFromBpm(bpm);
+      const timing =
+        endBeat > 4
+          ? sortTimingAnchors([
+              ...base,
+              { beat: endBeat, timer: (endBeat * 60) / bpm },
+            ])
+          : base;
       return {
         meta: {
           ...s.meta,
-          SongTiming: withOffsetInTiming(anchorsFromBpm(bpm), offset),
+          SongTiming: timing,
         },
         bpmConfidence: null,
       };
-    }),
+    });
+  },
 
   detectBpmFromAudio: async () => {
     const { audioBuffer } = get();
@@ -230,12 +326,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       await new Promise((r) => setTimeout(r, 0));
       const { bpm, confidence } = detectBpm(audioBuffer);
+      recordHistory("timing");
       set((s) => {
-        const offset = getSongOffset(s.meta);
+        const sorted = sortTimingAnchors(s.meta.SongTiming);
+        const endBeat =
+          sorted.length > 2
+            ? sorted[sorted.length - 1].beat
+            : Math.max(
+                ...Object.values(s.charts).flatMap((notes) => notes.map((n) => n.Beat)),
+                4
+              );
+        const base = anchorsFromBpm(bpm);
+        const timing =
+          endBeat > 4
+            ? sortTimingAnchors([
+                ...base,
+                { beat: endBeat, timer: (endBeat * 60) / bpm },
+              ])
+            : base;
         return {
           meta: {
             ...s.meta,
-            SongTiming: withOffsetInTiming(anchorsFromBpm(bpm), offset),
+            SongTiming: timing,
           },
           bpmDetecting: false,
           bpmConfidence: confidence,
@@ -274,38 +386,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     syncAudioPlaybackRate(audio, playbackSpeed);
   },
   setOffset: (seconds) => {
+    recordHistory("offset");
     const offset = Math.round(seconds * 1000) / 1000;
     set((s) => ({
       meta: {
         ...s.meta,
         SongOffsetSeconds: offset,
-        SongTiming: withOffsetInTiming(s.meta.SongTiming, offset),
       },
     }));
   },
   nudgeOffset: (deltaSeconds) => {
+    recordHistory("offset");
     const offset =
       Math.round((get().meta.SongOffsetSeconds + deltaSeconds) * 1000) / 1000;
     set((s) => ({
       meta: {
         ...s.meta,
         SongOffsetSeconds: offset,
-        SongTiming: withOffsetInTiming(s.meta.SongTiming, offset),
       },
     }));
   },
   setOffsetFromPlayhead: () => {
+    recordHistory("offset");
     const offset = Math.round(get().currentTime * 1000) / 1000;
     set((s) => ({
       meta: {
         ...s.meta,
         SongOffsetSeconds: offset,
-        SongTiming: withOffsetInTiming(s.meta.SongTiming, offset),
       },
     }));
   },
   goToChartStart: () => {
     set({ scrollTick: 0, currentTime: 0 });
+    seekChartTime(0);
   },
   setCurrentTime: (currentTime) => set({ currentTime }),
   setIsPlaying: (isPlaying) => set({ isPlaying }),
@@ -380,15 +493,77 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   loadMeta: async (file) => {
+    if (isRlrrFile(file)) {
+      const paradiddlePackage = await parseRlrrFile(file);
+      if (!paradiddlePackage) {
+        window.alert(
+          "Could not read this Paradiddle .rlrr file. The file may be corrupt or use an unsupported format."
+        );
+        return;
+      }
+      const { meta, charts, audioFileName, coverFileName } = paradiddlePackage;
+      const view = importViewState(charts);
+      const noteCount = charts[view.difficulty].length;
+      set({
+        meta,
+        charts,
+        difficulty: view.difficulty,
+        scrollTick: view.scrollTick,
+        currentTime: 0,
+        isPlaying: false,
+        sourceIndiesPath: null,
+        clipboardMessage: `Imported ${meta.NameSong} (${noteCount} notes)`,
+      });
+      if (coverFileName) {
+        const coverFile = await loadSiblingFile(file, coverFileName);
+        if (coverFile) {
+          await get().loadCoverImage(coverFile);
+        } else {
+          get().clearCoverImage();
+        }
+      } else {
+        get().clearCoverImage();
+      }
+      if (audioFileName) {
+        const audioFile = await loadSiblingFile(file, audioFileName);
+        if (audioFile) {
+          await get().loadAudio(audioFile);
+        } else {
+          set({
+            clipboardMessage: `Imported ${meta.NameSong} (${noteCount} notes) — use Song to load ${audioFileName} from the same folder.`,
+          });
+        }
+      }
+      const afterAudio = importViewState(get().charts);
+      set({
+        difficulty: afterAudio.difficulty,
+        scrollTick: afterAudio.scrollTick,
+        currentTime: 0,
+        isPlaying: false,
+      });
+      resetHistoryStack();
+      return;
+    }
+
     const indiesPackage = await parseIndiesFile(file);
     if (indiesPackage) {
       const { meta, charts, audioFile, coverFile } = indiesPackage;
+      const importPath = fileSystemPath(file);
+      const filename = `${sanitizeIndiesFilename(meta.NameSong || meta.NameArtist || "song")}.indies`;
+      let sourceIndiesPath: string | null = null;
+      if (importPath && isOutputFolderPath(importPath)) {
+        sourceIndiesPath = importPath;
+      } else if (window.electronAPI?.isDesktop) {
+        const outputDir = await getOutputFolder();
+        if (outputDir) sourceIndiesPath = joinOutputPath(outputDir, filename);
+      }
       set({
         meta,
         charts,
         scrollTick: 0,
         currentTime: 0,
         isPlaying: false,
+        sourceIndiesPath,
       });
       if (coverFile) {
         await get().loadCoverImage(coverFile);
@@ -398,29 +573,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (audioFile) {
         await get().loadAudio(audioFile);
       }
+      resetHistoryStack();
       return;
     }
 
     const text = await file.text();
     if (isChartFile(text)) {
       const { meta, charts } = parseChartFile(text);
+      const view = importViewState(charts);
       set({
         meta,
         charts,
-        scrollTick: 0,
+        difficulty: view.difficulty,
+        scrollTick: view.scrollTick,
         currentTime: 0,
         isPlaying: false,
+        sourceIndiesPath: null,
       });
+      resetHistoryStack();
       return;
     }
     const meta = parseMetaJson(text);
+    const charts = chartsFromMeta(meta);
     set({
       meta,
-      charts: chartsFromMeta(meta),
+      charts,
       scrollTick: 0,
       currentTime: 0,
       isPlaying: false,
+      sourceIndiesPath: null,
     });
+    resetHistoryStack();
   },
 
   loadChart: async (file) => {
@@ -432,13 +615,42 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       scrollTick: 0,
       currentTime: 0,
       isPlaying: false,
+      sourceIndiesPath: null,
+    });
+    resetHistoryStack();
+  },
+
+  generateLowerDifficultiesFromExtreme: (force = false) => {
+    const { charts } = get();
+    if (charts.extreme.length === 0) {
+      set({ clipboardMessage: "Add notes on Extreme first" });
+      return;
+    }
+    const hasLower =
+      charts.hard.length > 0 || charts.normal.length > 0 || charts.easy.length > 0;
+    if (hasLower && !force) {
+      const ok = window.confirm(
+        "Replace Easy, Normal, and Hard with auto-generated charts from Extreme?"
+      );
+      if (!ok) return;
+    }
+    recordHistory("chart");
+    const generated = generateLowerDifficulties(charts.extreme);
+    set({
+      charts: { ...charts, ...generated },
+      clipboardMessage: `Auto-charted ${generated.easy.length} Easy · ${generated.normal.length} Normal · ${generated.hard.length} Hard`,
     });
   },
 
   exportIndies: async () => {
     if (get().exportingIndies) return;
 
-    const { meta, charts, audioFile, audioBuffer, coverImageFile } = get();
+    let { meta, charts, audioFile, audioBuffer, coverImageFile } = get();
+    const filled = chartsWithAutoDownchart(charts);
+    if (filled !== charts) {
+      charts = filled;
+      set({ charts });
+    }
     const issues = validateIndiesCharts(charts);
     if (issues.length > 0) {
       window.alert(issues.join("\n"));
@@ -458,14 +670,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         coverFile: coverImageFile,
         audioBuffer,
       });
-      const base = sanitizeIndiesFilename(meta.NameSong || meta.NameArtist || "song");
-      const result = await saveBlobFile(`${base}.indies`, blob);
+      const filename = `${sanitizeIndiesFilename(meta.NameSong || meta.NameArtist || "song")}.indies`;
+      const hadOutputTarget = Boolean(get().sourceIndiesPath);
+      const result = await saveBlobFile(filename, blob, { backup: true });
       const where =
         result.method === "disk" ? result.path : `Downloads (${result.filename})`;
-      set({ clipboardMessage: `Exported ${where}` });
+      const verb = hadOutputTarget ? "Updated" : "Saved";
+      set({
+        clipboardMessage: `${verb} ${where}`,
+        sourceIndiesPath:
+          result.method === "disk" && window.electronAPI?.isDesktop ? result.path : null,
+      });
       if (result.method === "disk") {
         await openOutputFolder();
-        window.alert(`Saved to:\n${result.path}`);
+        window.alert(`${verb}:\n${result.path}\n\nA .bak backup was kept if the file already existed.`);
       }
     } catch (err) {
       window.alert(
@@ -476,8 +694,81 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
   },
 
+  publishToIndiesDb: async () => {
+    if (get().publishingIndies) {
+      throw new Error("Publish already in progress.");
+    }
+
+    let { meta, charts, audioFile, audioBuffer, coverImageFile } = get();
+    const filled = chartsWithAutoDownchart(charts);
+    if (filled !== charts) {
+      charts = filled;
+      set({ charts });
+    }
+
+    const issues = validateIndiesCharts(charts);
+    if (issues.length > 0) {
+      throw new Error(issues.join("\n"));
+    }
+    if (!audioFile || !audioBuffer) {
+      throw new Error("Load song audio before publishing to Indies-DB.");
+    }
+    if (!supabase) {
+      throw new Error(
+        "Indies-DB is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env."
+      );
+    }
+
+    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+    if (sessionErr) throw sessionErr;
+    const user = sessionData.session?.user;
+    if (!user) {
+      throw new Error("Sign in to publish your map.");
+    }
+
+    set({ publishingIndies: true });
+    try {
+      const exportMeta = {
+        ...meta,
+        IndiesDbMapId: meta.IndiesDbMapId?.trim() || undefined,
+      };
+      const blob = await buildIndiesZip({
+        meta: exportMeta,
+        charts,
+        audioFile,
+        coverFile: coverImageFile,
+        audioBuffer,
+      });
+
+      const result = await publishIndiesPackage({
+        user,
+        indiesBlob: blob,
+        meta: exportMeta,
+        charts,
+        coverFile: coverImageFile,
+        existingMapId: exportMeta.IndiesDbMapId,
+      });
+
+      set({
+        meta: { ...meta, IndiesDbMapId: result.mapId },
+        clipboardMessage: result.isUpdate
+          ? `Updated on Indies-DB: ${result.mapUrl}`
+          : `Published to Indies-DB: ${result.mapUrl}`,
+      });
+
+      return result;
+    } finally {
+      set({ publishingIndies: false });
+    }
+  },
+
   exportChart: async () => {
-    const { meta, charts, audioFileName, duration } = get();
+    let { meta, charts, audioFileName, duration } = get();
+    const filled = chartsWithAutoDownchart(charts);
+    if (filled !== charts) {
+      charts = filled;
+      set({ charts });
+    }
     const issues = validateIndiesCharts(charts);
     if (issues.length > 0) {
       window.alert(issues.join("\n"));
@@ -521,9 +812,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     });
 
     if (cellIdx >= 0) {
+      recordHistory("chart");
       notes.splice(cellIdx, 1);
     } else {
       if (noteTick < strikeTick) return;
+      recordHistory("chart");
       notes.push({ Beat: snapped, Id: id, Strength: strength });
     }
     notes.sort((a, b) => a.Beat - b.Beat || a.Id - b.Id);
@@ -537,6 +830,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       (n) => !(n.Id === id && beatToTick(n.Beat) === targetTick)
     );
     if (notes.length === charts[difficulty].length) return;
+    recordHistory("chart");
     set({ charts: { ...charts, [difficulty]: notes } });
   },
 
@@ -602,6 +896,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ clipboardMessage: "No notes in selection" });
       return 0;
     }
+    recordHistory("chart");
     const toRemove = new Set(picked.map((n) => `${beatToTick(n.Beat)}:${n.Id}`));
     const notes = charts[difficulty].filter(
       (n) => !toRemove.has(`${beatToTick(n.Beat)}:${n.Id}`)
@@ -630,6 +925,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return 0;
     }
 
+    recordHistory("chart");
     const { difficulty, charts, snapTicks } = get();
     const targetTick = snapTick(Math.max(0, strikeTick), snapTicks);
     const pasted = pastePayloadAtStrikeTick(payload, targetTick);
@@ -644,7 +940,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   clearClipboardMessage: () => set({ clipboardMessage: null }),
 
-  updatePhase: (index, patch) =>
+  updatePhase: (index, patch) => {
+    recordHistory("phase");
     set((s) => {
       const phases = sortSongPhases(s.meta.SongPhases);
       if (index < 0 || index >= phases.length) return s;
@@ -659,9 +956,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (patch.beat !== undefined) next.beat = Math.max(0, patch.beat);
       phases[index] = next;
       return { meta: { ...s.meta, SongPhases: sortSongPhases(phases) } };
-    }),
+    });
+  },
 
-  addPhase: () =>
+  addPhase: () => {
+    recordHistory("phase");
     set((s) => {
       const phases = sortSongPhases(s.meta.SongPhases);
       const lastBeat = phases.length > 0 ? phases[phases.length - 1].beat : 0;
@@ -672,9 +971,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         phaseName: phaseById(2).label,
       };
       return { meta: { ...s.meta, SongPhases: sortSongPhases([...phases, phase]) } };
-    }),
+    });
+  },
 
-  addPhaseAtPlayhead: () =>
+  addPhaseAtPlayhead: () => {
+    recordHistory("phase");
     set((s) => {
       const beat = Math.round(timeToBeat(s.currentTime, s.meta.SongTiming) * 1000) / 1000;
       const phase: SongPhase = {
@@ -689,17 +990,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           SongPhases: sortSongPhases([...s.meta.SongPhases, phase]),
         },
       };
-    }),
+    });
+  },
 
-  removePhase: (index) =>
+  removePhase: (index) => {
+    recordHistory("phase");
     set((s) => {
       const phases = sortSongPhases(s.meta.SongPhases);
       if (phases.length <= 1 || index < 0 || index >= phases.length) return s;
       phases.splice(index, 1);
       return { meta: { ...s.meta, SongPhases: phases } };
-    }),
+    });
+  },
 
-  updateAnchor: (index, patch) =>
+  updateAnchor: (index, patch) => {
+    recordHistory("timing");
     set((s) => {
       const anchors = sortTimingAnchors(s.meta.SongTiming);
       if (index < 0 || index >= anchors.length) return s;
@@ -708,27 +1013,42 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (patch.timer !== undefined) next.timer = Math.max(0, patch.timer);
       anchors[index] = next;
       const timing = sortTimingAnchors(anchors);
-      const offset =
-        timing[0]?.beat === 0 ? timing[0].timer : s.meta.SongOffsetSeconds;
+      if (index === 0 && timing[0]?.beat === 0 && patch.timer !== undefined) {
+        const offset = Math.max(0, Math.round(patch.timer * 1000) / 1000);
+        timing[0] = { ...timing[0], timer: 0 };
+        return {
+          meta: {
+            ...s.meta,
+            SongOffsetSeconds: offset,
+            SongTiming: timing,
+          },
+        };
+      }
+      if (timing[0]?.beat === 0) {
+        timing[0] = { ...timing[0], timer: 0 };
+      }
       return {
         meta: {
           ...s.meta,
-          SongOffsetSeconds: offset,
           SongTiming: timing,
         },
       };
-    }),
+    });
+  },
 
-  addAnchor: () =>
+  addAnchor: () => {
+    recordHistory("timing");
     set((s) => {
       const anchors = sortTimingAnchors(s.meta.SongTiming);
       const last = anchors[anchors.length - 1];
       const beat = last.beat + 4;
       const anchor: TimingAnchor = { beat, timer: beatToTime(beat, anchors) };
       return { meta: { ...s.meta, SongTiming: sortTimingAnchors([...anchors, anchor]) } };
-    }),
+    });
+  },
 
-  addAnchorAtPlayhead: () =>
+  addAnchorAtPlayhead: () => {
+    recordHistory("timing");
     set((s) => {
       const beat = Math.round(timeToBeat(s.currentTime, s.meta.SongTiming) * 1000) / 1000;
       const timer = Math.round(s.currentTime * 1000) / 1000;
@@ -741,15 +1061,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           Math.abs(item.timer - list[idx - 1].timer) > 0.001
       );
       return { meta: { ...s.meta, SongTiming: deduped.length >= 2 ? deduped : anchors } };
-    }),
+    });
+  },
 
-  removeAnchor: (index) =>
+  removeAnchor: (index) => {
+    recordHistory("timing");
     set((s) => {
       const anchors = sortTimingAnchors(s.meta.SongTiming);
       if (anchors.length <= 2 || index < 0 || index >= anchors.length) return s;
       anchors.splice(index, 1);
       return { meta: { ...s.meta, SongTiming: anchors } };
-    }),
+    });
+  },
 
   setPlacementMode: (placementMode) => set({ placementMode }),
 
@@ -767,7 +1090,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return { pendingPhasePlacement: next };
     }),
 
-  placePhaseAtBeat: (beat) =>
+  placePhaseAtBeat: (beat) => {
+    recordHistory("phase");
     set((s) => {
       const snapped = snapBeat(Math.max(0, beat), s.snapTicks);
       const phases = sortSongPhases(s.meta.SongPhases);
@@ -782,9 +1106,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (existing >= 0) phases[existing] = nextPhase;
       else phases.push(nextPhase);
       return { meta: { ...s.meta, SongPhases: sortSongPhases(phases) } };
-    }),
+    });
+  },
 
-  placeAnchorAtBeat: (beat) =>
+  placeAnchorAtBeat: (beat) => {
+    recordHistory("timing");
     set((s) => {
       const snapped = snapBeat(Math.max(0, beat), s.snapTicks);
       const anchors = sortTimingAnchors(s.meta.SongTiming);
@@ -805,5 +1131,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           SongTiming: deduped.length >= 2 ? deduped : sortTimingAnchors(anchors),
         },
       };
-    }),
-}));
+    });
+  },
+};
+});

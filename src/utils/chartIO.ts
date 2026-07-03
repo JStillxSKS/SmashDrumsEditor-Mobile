@@ -5,7 +5,7 @@ import { normalizeChartNotes } from "./chartNotes";
 import { chDrumEntriesToNotes, indiesNoteToChLanes } from "./chartLaneMapping";
 import { CHART_MUSIC_STREAM } from "./audioFormat";
 import { getSongOffset } from "./offset";
-import { buildMetaJson, createEmptyMeta, withOffsetInTiming } from "./metaIO";
+import { buildMetaJson, createEmptyMeta, unbakeOffsetFromTiming } from "./metaIO";
 import {
   anchorsFromBpm,
   beatToTime,
@@ -49,6 +49,28 @@ function parseQuotedValue(raw: string): string {
     return unescapeChartString(trimmed.slice(1, -1));
   }
   return trimmed;
+}
+
+/** Moonscraper / FeedBack — strip from first `;` outside quoted strings. */
+function stripChartLineComment(line: string): string {
+  let inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuote = !inQuote;
+      continue;
+    }
+    if (ch === ";" && !inQuote) {
+      return line.slice(0, i).trimEnd();
+    }
+  }
+  return line;
+}
+
+function parseChartNumber(raw: string): number {
+  const token = raw.trim().split(/\s+/)[0];
+  const n = Number(token);
+  return Number.isFinite(n) ? n : NaN;
 }
 
 function bpmAtBeat(beat: number, anchors: TimingAnchor[]): number {
@@ -275,8 +297,8 @@ function parseChartSections(text: string): {
   let inBlock = false;
 
   for (const rawLine of clean.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("//")) continue;
+    const line = stripChartLineComment(rawLine.trim());
+    if (!line || line.startsWith("//") || line.startsWith(";")) continue;
 
     const sectionMatch = line.match(/^\[([^\]]+)\]$/);
     if (sectionMatch) {
@@ -323,8 +345,8 @@ function syncTrackToAnchors(entries: TrackEntry[]): TimingAnchor[] {
   const bByTick = new Map<number, number>();
 
   for (const entry of entries) {
-    if (entry.key === "A") aByTick.set(entry.tick, Number(entry.value));
-    if (entry.key === "B") bByTick.set(entry.tick, Number(entry.value));
+    if (entry.key === "A") aByTick.set(entry.tick, parseChartNumber(entry.value));
+    if (entry.key === "B") bByTick.set(entry.tick, parseChartNumber(entry.value));
   }
 
   const aTicks = [...aByTick.keys()].sort((a, b) => a - b);
@@ -336,7 +358,8 @@ function syncTrackToAnchors(entries: TrackEntry[]): TimingAnchor[] {
     }));
   }
 
-  const bpm = (bByTick.get(0) ?? 120000) / 1000;
+  const rawBpm = bByTick.get(0) ?? 120000;
+  const bpm = Number.isFinite(rawBpm) ? rawBpm / 1000 : 120;
   if (aTicks.length === 1 && aTicks[0] === 0) {
     const endTick = Math.max(...entries.map((e) => e.tick), 0);
     const endBeat = endTick / RESOLUTION;
@@ -416,7 +439,7 @@ export function parseChartFile(raw: string): { meta: MetaJson; charts: Record<Di
     NameCharter: song.Charter ?? base.NameCharter,
     FilePath: song.MusicStream ?? "",
     SongOffsetSeconds: songOffset,
-    SongTiming: withOffsetInTiming(rawTiming, songOffset),
+    SongTiming: unbakeOffsetFromTiming(rawTiming, songOffset),
     SongPhases: eventsToPhases(eventEntries).map((phase) => ({
       beat: phase.beat,
       phase: clampPhaseId(phase.phase),

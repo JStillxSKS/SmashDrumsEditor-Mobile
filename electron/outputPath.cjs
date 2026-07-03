@@ -44,4 +44,10 @@ function openOutputRoot() {
   return shell.openPath(root);
 }
 
-module.exports = { getOutputRoot, ensureOutputRoot, resolveOutputPath, openOutputRoot };
+module.exports = {
+  getOutputRoot,
+  ensureOutputRoot,
+  resolveOutputPath,
+  openOutputRoot,
+  isTempPath,
+};
