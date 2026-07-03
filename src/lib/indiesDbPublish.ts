@@ -35,8 +35,9 @@ export async function publishIndiesPackage(options: {
   charts: Record<Difficulty, ChartNote[]>;
   coverFile: File | null;
   existingMapId?: string | null;
+  explicit?: boolean;
 }): Promise<PublishResult> {
-  const { user, indiesBlob, meta, charts, coverFile, existingMapId } = options;
+  const { user, indiesBlob, meta, charts, coverFile, existingMapId, explicit = false } = options;
   if (!supabase) {
     throw new Error(
       "Indies-DB is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env."
@@ -96,6 +97,7 @@ export async function publishIndiesPackage(options: {
     cover_path: coverPath,
     bpm_est: bpmFromAnchors(meta.SongTiming),
     difficulties: difficultyCounts(charts),
+    explicit,
   };
 
   if (isUpdate) {

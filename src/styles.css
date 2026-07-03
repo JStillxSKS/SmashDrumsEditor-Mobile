@@ -19,8 +19,13 @@
   --sidebar-width: 372px;
   /* Blank space between panels and highway */
   --panel-highway-gap: 36px;
-  /* Highway width when 496px panels sat flush — keeps chart size unchanged */
-  --highway-slot-width: max(360px, calc(100vw - 992px));
+  /* Total horizontal space reserved for both open drawer wings + highway */
+  --highway-reserved: 992px;
+  --highway-min-width: 360px;
+  --drawer-rail-width: 40px;
+  --drawer-wing-open: calc(
+    (100vw - max(var(--highway-min-width), calc(100vw - var(--highway-reserved)))) / 2
+  );
 }
 
 * {
@@ -230,33 +235,149 @@ body {
 
 /* ── Workspace ── */
 .workspace {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--col-left) minmax(var(--highway-min-width), 1fr) var(--col-right);
   flex: 1;
   min-height: 0;
   min-width: 0;
   align-items: stretch;
   overflow: hidden;
+  --col-left: var(--drawer-wing-open);
+  --col-right: var(--drawer-wing-open);
+  transition: grid-template-columns 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.workspace[data-left-open="false"] {
+  --col-left: var(--drawer-rail-width);
+}
+
+.workspace[data-right-open="false"] {
+  --col-right: var(--drawer-rail-width);
 }
 
 .sidebar-wing {
-  flex: 1 1 0;
+  position: relative;
   min-width: 0;
+  min-height: 0;
   display: flex;
-  justify-content: center;
   align-items: stretch;
-  padding: 0 var(--panel-highway-gap);
+  overflow: hidden;
+}
+
+.sidebar-wing--left {
+  justify-content: flex-end;
+  padding-right: var(--panel-highway-gap);
+}
+
+.sidebar-wing--right {
+  justify-content: flex-start;
+  padding-left: var(--panel-highway-gap);
+}
+
+.sidebar-wing.is-collapsed {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar-drawer-content {
+  width: var(--sidebar-width);
+  max-width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  opacity: 1;
+  transition:
+    opacity 0.2s ease,
+    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-wing--left.is-collapsed .sidebar-drawer-content {
+  opacity: 0;
+  transform: translateX(-20px);
+  pointer-events: none;
+}
+
+.sidebar-wing--right.is-collapsed .sidebar-drawer-content {
+  opacity: 0;
+  transform: translateX(20px);
+  pointer-events: none;
+}
+
+.drawer-toggle {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 28px;
+  height: 52px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid rgba(255, 184, 0, 0.28);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.92);
+  color: var(--accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    box-shadow 0.2s;
+  box-shadow: 0 0 12px rgba(255, 184, 0, 0.08);
+}
+
+.drawer-toggle:hover {
+  border-color: rgba(255, 184, 0, 0.55);
+  background: rgba(255, 184, 0, 0.08);
+  box-shadow: 0 0 18px rgba(255, 184, 0, 0.18);
+}
+
+.drawer-toggle-icon {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+}
+
+.sidebar-wing--left .drawer-toggle {
+  right: 6px;
+}
+
+.sidebar-wing--left .drawer-toggle-icon {
+  transform: rotate(-135deg);
+}
+
+.sidebar-wing--left.is-collapsed .drawer-toggle {
+  right: 6px;
+  left: auto;
+}
+
+.sidebar-wing--left.is-collapsed .drawer-toggle-icon {
+  transform: rotate(45deg);
+}
+
+.sidebar-wing--right .drawer-toggle {
+  left: 6px;
+}
+
+.sidebar-wing--right .drawer-toggle-icon {
+  transform: rotate(45deg);
+}
+
+.sidebar-wing--right.is-collapsed .drawer-toggle-icon {
+  transform: rotate(-135deg);
 }
 
 .editor-main {
-  flex: 0 0 var(--highway-slot-width);
-  width: var(--highway-slot-width);
-  max-width: var(--highway-slot-width);
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  min-width: 0;
-  min-height: 0;
   padding: 6px 8px;
+  transition: padding 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ── Chart / Highway ── */
@@ -849,6 +970,34 @@ body {
   margin: 0;
 }
 
+.publish-explicit {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.publish-explicit input {
+  margin-top: 2px;
+  accent-color: #fbbf24;
+}
+
+.publish-explicit strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.publish-explicit .publish-muted {
+  display: block;
+  margin: 0;
+}
+
 .publish-signed-in {
   margin: 0 0 14px;
   display: flex;
@@ -1363,7 +1512,8 @@ body {
   :root {
     --panel-highway-gap: 12px;
     --sidebar-width: 280px;
-    --highway-slot-width: max(300px, calc(100vw - 640px));
+    --highway-reserved: 640px;
+    --highway-min-width: 300px;
   }
 
   .controls-list {

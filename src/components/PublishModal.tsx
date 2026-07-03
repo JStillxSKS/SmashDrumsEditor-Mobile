@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAuth } from "../context/AuthContext";
 import { INDIES_DB_ORIGIN } from "../lib/indiesDbPublish";
-import { supabaseConfigured } from "../lib/supabase";
+import { supabase, supabaseConfigured } from "../lib/supabase";
 import { useEditorStore } from "../store/useEditorStore";
 
 type Mode = "signin" | "signup";
@@ -46,6 +46,24 @@ export function PublishModal({ open, onClose }: PublishModalProps) {
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishedUrl, setPublishedUrl] = useState<string | null>(null);
   const [wasUpdate, setWasUpdate] = useState(false);
+  const [explicit, setExplicit] = useState(false);
+
+  const linkedMapId = meta.IndiesDbMapId?.trim();
+
+  useEffect(() => {
+    if (!open) return;
+    setExplicit(false);
+    if (!linkedMapId || !supabase) return;
+
+    void supabase
+      .from("maps")
+      .select("explicit")
+      .eq("id", linkedMapId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) setExplicit(Boolean(data.explicit));
+      });
+  }, [open, linkedMapId]);
 
   if (!open) return null;
 
@@ -85,7 +103,7 @@ export function PublishModal({ open, onClose }: PublishModalProps) {
     setPublishError(null);
     setPublishedUrl(null);
     try {
-      const result = await publishToIndiesDb();
+      const result = await publishToIndiesDb(explicit);
       setPublishedUrl(result.mapUrl);
       setWasUpdate(result.isUpdate);
     } catch (err) {
@@ -95,7 +113,6 @@ export function PublishModal({ open, onClose }: PublishModalProps) {
 
   const title = meta.NameSong?.trim() || "Untitled Song";
   const artist = meta.NameArtist?.trim() || "Unknown Artist";
-  const linkedMapId = meta.IndiesDbMapId?.trim();
 
   return createPortal(
     <div className="publish-overlay" onClick={handleClose}>
@@ -206,6 +223,20 @@ export function PublishModal({ open, onClose }: PublishModalProps) {
                 </div>
               )}
             </dl>
+
+            <label className="publish-explicit">
+              <input
+                type="checkbox"
+                checked={explicit}
+                onChange={(e) => setExplicit(e.target.checked)}
+              />
+              <span>
+                <strong>Explicit language</strong>
+                <span className="publish-muted">
+                  Check if the song contains swearing or other explicit lyrics.
+                </span>
+              </span>
+            </label>
 
             <p className="publish-muted publish-signed-in">
               Signed in as {user.email}

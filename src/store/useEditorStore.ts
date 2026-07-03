@@ -163,7 +163,7 @@ type EditorState = {
   loadMeta: (file: File) => Promise<void>;
   loadChart: (file: File) => Promise<void>;
   exportIndies: () => Promise<void>;
-  publishToIndiesDb: () => Promise<PublishResult>;
+  publishToIndiesDb: (explicit?: boolean) => Promise<PublishResult>;
   exportChart: () => void;
   generateLowerDifficultiesFromExtreme: (force?: boolean) => void;
   toggleNote: (beat: number, id: 0 | 1 | 2 | 3 | 4 | 5) => void;
@@ -694,7 +694,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     }
   },
 
-  publishToIndiesDb: async () => {
+  publishToIndiesDb: async (explicit = false) => {
     if (get().publishingIndies) {
       throw new Error("Publish already in progress.");
     }
@@ -747,6 +747,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         charts,
         coverFile: coverImageFile,
         existingMapId: exportMeta.IndiesDbMapId,
+        explicit,
       });
 
       set({
