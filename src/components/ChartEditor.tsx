@@ -21,7 +21,12 @@ import {
   snapTick,
   visualGridRowPixels,
 } from "../utils/resolution";
-import { seekChartTime, seekScrollTick } from "../utils/audioElement";
+import {
+  getPlaybackAudioTime,
+  isPlaybackAudible,
+  seekChartTime,
+  seekScrollTick,
+} from "../utils/audioElement";
 import { playDrumHit } from "../utils/drumHits";
 import { getSongOffset, isInSilentLeadIn } from "../utils/offset";
 import { beatToTime, timeToBeat } from "../utils/timing";
@@ -389,10 +394,9 @@ function scrollTickAtClick(): number {
   const { scrollTick: storeScroll, isPlaying, meta, currentTime } = state;
   if (!isPlaying) return storeScroll;
 
-  const audio = document.getElementById("editor-audio") as HTMLAudioElement | null;
   let chartTime = currentTime;
-  if (audio && !audio.muted) {
-    chartTime = audio.currentTime + getSongOffset(meta);
+  if (isPlaybackAudible()) {
+    chartTime = getPlaybackAudioTime() + getSongOffset(meta);
   }
   return timeToBeat(chartTime, meta.SongTiming) * RESOLUTION;
 }
@@ -517,12 +521,10 @@ export function ChartEditor() {
       const state = useEditorStore.getState();
       const playing = state.isPlaying;
       const offset = getSongOffset(state.meta);
-      const audio = document.getElementById("editor-audio") as HTMLAudioElement | null;
-
       // Smooth scroll: sample audio every rAF frame, not timeupdate (~4 Hz)
       let chartTime = state.currentTime;
-      if (playing && audio && !audio.muted) {
-        chartTime = audio.currentTime + offset;
+      if (playing && isPlaybackAudible()) {
+        chartTime = getPlaybackAudioTime() + offset;
       }
 
       const inSilence = isInSilentLeadIn(chartTime, offset);

@@ -1,93 +1,30 @@
-const SEEK_TIMEOUT_MS = 300;
+import { editorAudioContext } from "./editorAudioContext";
+import { editorAudioPlayer } from "./editorAudioPlayer";
+import { clampPlaybackSpeed, PLAYBACK_SPEED_MAX, PLAYBACK_SPEED_MIN } from "./playbackSpeed";
 
-export const PLAYBACK_SPEED_MIN = 0.25;
-export const PLAYBACK_SPEED_MAX = 2;
+export { PLAYBACK_SPEED_MIN, PLAYBACK_SPEED_MAX, clampPlaybackSpeed };
 
-export function clampPlaybackSpeed(speed: number): number {
-  return Math.max(PLAYBACK_SPEED_MIN, Math.min(PLAYBACK_SPEED_MAX, speed));
-}
-
-export function syncAudioPlaybackRate(
-  audio: HTMLAudioElement | null,
-  speed: number
-): void {
-  if (!audio) return;
-  audio.playbackRate = clampPlaybackSpeed(speed);
-  audio.preservesPitch = true;
-}
-
-export function syncAudioVolume(
-  audio: HTMLAudioElement | null,
-  volume: number
-): void {
-  if (!audio) return;
-  audio.volume = Math.max(0, Math.min(1, volume));
-}
-
-let seekGeneration = 0;
-let playGeneration = 0;
-let playChain: Promise<void> = Promise.resolve();
-
-/** Invalidate in-flight seek/play work (call on pause). */
-export function cancelPendingAudioPlayback(): void {
-  seekGeneration++;
-  playGeneration++;
-}
-
-/** Wait until the media element has seeked (Electron often starts play before seek lands). */
-export function waitForAudioSeek(
-  audio: HTMLAudioElement,
-  time: number
-): Promise<void> {
-  const target = Math.max(0, time);
-  if (Math.abs(audio.currentTime - target) < 0.002) {
-    return Promise.resolve();
+export async function resumeEditorAudio(): Promise<void> {
+  if (editorAudioContext.state === "suspended") {
+    await editorAudioContext.resume();
   }
-
-  ++seekGeneration;
-
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      audio.removeEventListener("seeked", onSeeked);
-      resolve();
-    };
-    const onSeeked = () => finish();
-    audio.addEventListener("seeked", onSeeked);
-    audio.currentTime = target;
-    window.setTimeout(finish, SEEK_TIMEOUT_MS);
-  });
 }
 
-export async function playEditorAudioAt(
-  audio: HTMLAudioElement,
-  audioTime: number
-): Promise<void> {
-  const gen = ++playGeneration;
+export function syncAudioPlaybackRate(_audio: HTMLAudioElement | null, speed: number): void {
+  editorAudioPlayer.setRate(speed);
+}
 
-  playChain = playChain.then(async () => {
-    if (gen !== playGeneration) return;
+export function syncAudioVolume(_audio: HTMLAudioElement | null, volume: number): void {
+  editorAudioPlayer.setVolume(volume);
+}
 
-    await waitForAudioSeek(audio, audioTime);
-    if (gen !== playGeneration) return;
+/** Stop in-flight playback work (call on pause). */
+export function cancelPendingAudioPlayback(): void {
+  editorAudioPlayer.cancelPending();
+}
 
-    if (!audio.paused) return;
-
-    try {
-      await audio.play();
-    } catch {
-      if (gen !== playGeneration) return;
-      await new Promise((r) => window.setTimeout(r, 50));
-      if (gen !== playGeneration) return;
-      try {
-        await audio.play();
-      } catch {
-        // Autoplay blocked — chart clock still advances through silent lead-in.
-      }
-    }
+export function playEditorAudioAt(audioTime: number): void {
+  void resumeEditorAudio().then(() => {
+    editorAudioPlayer.play(audioTime);
   });
-
-  await playChain;
 }

@@ -1,11 +1,17 @@
 import { useEditorStore } from "../store/useEditorStore";
 import { getActiveDuration } from "./audioSource";
+import { editorAudioPlayer } from "./editorAudioPlayer";
+import { playEditorAudioAt, resumeEditorAudio } from "./audioPlayback";
 import { chartToAudioTime, getSongOffset, isInSilentLeadIn } from "./offset";
 import { RESOLUTION } from "./resolution";
 import { beatToTime, timeToBeat } from "./timing";
 
-export function getAudioElement(): HTMLAudioElement | null {
-  return document.getElementById("editor-audio") as HTMLAudioElement | null;
+export function getPlaybackAudioTime(): number {
+  return editorAudioPlayer.getAudioTime();
+}
+
+export function isPlaybackAudible(): boolean {
+  return editorAudioPlayer.isAudible();
 }
 
 function clampChartTime(chartTime: number): number {
@@ -21,17 +27,18 @@ function syncAudioToChartTime(chartTime: number): void {
   const state = useEditorStore.getState();
   const offset = getSongOffset(state.meta);
   const duration = getActiveDuration(state);
-  const audio = getAudioElement();
-  if (!audio) return;
-
   const silent = isInSilentLeadIn(chartTime, offset);
-  audio.muted = silent;
-  if (silent) {
-    audio.currentTime = 0;
-  } else {
-    const audioTime = Math.min(chartToAudioTime(chartTime, offset), duration || Infinity);
-    audio.currentTime = Math.max(0, audioTime);
+  const audioTime = Math.min(chartToAudioTime(chartTime, offset), duration || Infinity);
+  const target = Math.max(0, audioTime);
+
+  editorAudioPlayer.setMuted(silent);
+  if (state.isPlaying && !silent) {
+    void resumeEditorAudio().then(() => playEditorAudioAt(target));
+    return;
   }
+
+  editorAudioPlayer.pause();
+  editorAudioPlayer.seek(silent ? 0 : target);
 }
 
 function commitSeek(chartTime: number, scrollTick: number): void {
@@ -67,10 +74,10 @@ export function seekToStrikeBar(): void {
 export function resyncAfterTimingChange(): void {
   const state = useEditorStore.getState();
   if (state.isPlaying) {
-    const audio = getAudioElement();
     const offset = getSongOffset(state.meta);
-    const chartTime =
-      audio && !audio.muted ? audio.currentTime + offset : state.currentTime;
+    const chartTime = isPlaybackAudible()
+      ? getPlaybackAudioTime() + offset
+      : state.currentTime;
     seekChartTime(chartTime);
     return;
   }

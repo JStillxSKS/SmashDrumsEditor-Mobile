@@ -11,6 +11,25 @@ export function getActiveAudioUrl(state: {
   return state.audioUrl;
 }
 
+export function getActiveAudioBuffer(state: {
+  audioSource: AudioSource;
+  audioBuffer: AudioBuffer | null;
+  drumsAudioBuffer: AudioBuffer | null;
+}): AudioBuffer | null {
+  if (state.audioSource === "drums" && state.drumsAudioBuffer) {
+    return state.drumsAudioBuffer;
+  }
+  return state.audioBuffer;
+}
+
+export function hasActiveAudio(state: {
+  audioSource: AudioSource;
+  audioBuffer: AudioBuffer | null;
+  drumsAudioBuffer: AudioBuffer | null;
+}): boolean {
+  return getActiveAudioBuffer(state) != null;
+}
+
 export function getActiveDuration(state: {
   audioSource: AudioSource;
   duration: number;

@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { laneColumnIndex } from "../types/meta";
 import { useEditorStore } from "../store/useEditorStore";
-import { seekChartTime } from "../utils/audioElement";
+import {
+  getPlaybackAudioTime,
+  isPlaybackAudible,
+  seekChartTime,
+} from "../utils/audioElement";
 import { getSongOffset } from "../utils/offset";
 import { beatToTick, RESOLUTION } from "../utils/resolution";
 import { songExtentTicks } from "../utils/songExtent";
@@ -111,10 +115,9 @@ export function SongOverview() {
       const timing = state.meta.SongTiming;
       const offset = getSongOffset(state.meta);
 
-      const audio = document.getElementById("editor-audio") as HTMLAudioElement | null;
       let chartTime = state.currentTime;
-      if (state.isPlaying && audio && !audio.muted) {
-        chartTime = audio.currentTime + offset;
+      if (state.isPlaying && isPlaybackAudible()) {
+        chartTime = getPlaybackAudioTime() + offset;
       }
 
       const playBeat = timeToBeat(chartTime, timing);
@@ -275,11 +278,9 @@ export function SongOverview() {
       const totalTicks = songExtentTicks(state.meta, state.charts, state.duration);
       const timing = state.meta.SongTiming;
       const offset = getSongOffset(state.meta);
-      const audio = document.getElementById("editor-audio") as HTMLAudioElement | null;
-
       let chartTime = state.currentTime;
-      if (state.isPlaying && audio && !audio.muted) {
-        chartTime = audio.currentTime + offset;
+      if (state.isPlaying && isPlaybackAudible()) {
+        chartTime = getPlaybackAudioTime() + offset;
       }
 
       const step = (totalTicks / RESOLUTION / 80) * (e.deltaY > 0 ? -1 : 1);

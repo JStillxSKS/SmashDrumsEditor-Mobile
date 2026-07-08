@@ -9,14 +9,12 @@ import {
 } from "../utils/audioElement";
 import {
   activeSourceLabel,
-  getActiveAudioUrl,
+  hasActiveAudio,
 } from "../utils/audioSource";
+import { editorAudioPlayer } from "../utils/editorAudioPlayer";
 import {
   cancelPendingAudioPlayback,
   playEditorAudioAt,
-  syncAudioPlaybackRate,
-  syncAudioVolume,
-  waitForAudioSeek,
 } from "../utils/audioPlayback";
 import {
   chartToAudioTime,
@@ -37,7 +35,6 @@ const BPM_MAX = 300;
 export function Toolbar() {
   const [publishOpen, setPublishOpen] = useState(false);
   const {
-    audioUrl,
     drumsAudioUrl,
     audioSource,
     audioFileName,
@@ -59,9 +56,8 @@ export function Toolbar() {
     setAudioSource,
     nudgeOffset,
     goToChartStart,
-    playbackSpeed,
-    songVolume,
     audioBuffer,
+    drumsAudioBuffer,
     bpmDetecting,
     bpmConfidence,
     setBpm,
@@ -75,18 +71,12 @@ export function Toolbar() {
   const [bpmDraft, setBpmDraft] = useState(() => String(committedBpm));
   const [bpmFocused, setBpmFocused] = useState(false);
 
-  const audioRef = useRef<HTMLAudioElement>(null);
   const rafRef = useRef(0);
   const lastFrameRef = useRef(0);
   const silentAudioStartedRef = useRef(false);
 
-  const activeAudioUrl = getActiveAudioUrl({
-    audioSource,
-    audioUrl,
-    drumsAudioUrl,
-  });
   const playingSource = activeSourceLabel({ audioSource, drumsAudioUrl });
-  const canPlay = Boolean(activeAudioUrl);
+  const canPlay = hasActiveAudio({ audioSource, audioBuffer, drumsAudioBuffer });
 
   const chartTime = isPlaying
     ? currentTime
@@ -96,11 +86,9 @@ export function Toolbar() {
   const audioTime = chartToAudioTime(chartTime, offset);
 
   const togglePlay = () => {
-    const audio = audioRef.current;
-    if (!audio || !activeAudioUrl) return;
+    if (!canPlay) return;
     if (isPlaying) {
       cancelPendingAudioPlayback();
-      audio.pause();
       seekChartTime(useEditorStore.getState().currentTime);
       silentAudioStartedRef.current = false;
       setIsPlaying(false);
@@ -111,61 +99,24 @@ export function Toolbar() {
       const silent = isInSilentLeadIn(strikeChartTime, off);
       silentAudioStartedRef.current = false;
       if (silent) {
-        audio.muted = true;
-        void waitForAudioSeek(audio, 0);
+        editorAudioPlayer.setMuted(true);
+        editorAudioPlayer.pause();
+        editorAudioPlayer.seek(0);
       } else {
-        audio.muted = false;
-        syncAudioPlaybackRate(audio, useEditorStore.getState().playbackSpeed);
-        void playEditorAudioAt(audio, chartToAudioTime(strikeChartTime, off));
+        editorAudioPlayer.setMuted(false);
+        playEditorAudioAt(chartToAudioTime(strikeChartTime, off));
       }
       setIsPlaying(true);
     }
   };
 
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !activeAudioUrl) return;
-
-    const chartTime = useEditorStore.getState().isPlaying
-      ? useEditorStore.getState().currentTime
-      : beatToTime(
-          useEditorStore.getState().scrollTick / RESOLUTION,
-          useEditorStore.getState().meta.SongTiming
-        );
-
-    const onReady = () => {
-      const state = useEditorStore.getState();
-      syncAudioPlaybackRate(audio, state.playbackSpeed);
-      syncAudioVolume(audio, state.songVolume);
-      seekChartTime(chartTime);
-      if (state.isPlaying && !isInSilentLeadIn(chartTime, getSongOffset(state.meta))) {
-        void playEditorAudioAt(
-          audio,
-          chartToAudioTime(chartTime, getSongOffset(state.meta))
-        );
-      }
-    };
-    audio.addEventListener("loadedmetadata", onReady);
-    syncAudioPlaybackRate(audio, playbackSpeed);
-    syncAudioVolume(audio, songVolume);
-    audio.load();
-    return () => audio.removeEventListener("loadedmetadata", onReady);
-  }, [activeAudioUrl, audioSource, playbackSpeed, songVolume]);
-
-  useEffect(() => {
     resyncAfterTimingChange();
   }, [meta.SongOffsetSeconds, meta.SongTiming]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const onEnd = () => setIsPlaying(false);
-
-    audio.addEventListener("ended", onEnd);
-    return () => {
-      audio.removeEventListener("ended", onEnd);
-    };
+    editorAudioPlayer.setOnEnded(() => setIsPlaying(false));
+    return () => editorAudioPlayer.setOnEnded(null);
   }, [setIsPlaying]);
 
   useEffect(() => {
@@ -173,9 +124,6 @@ export function Toolbar() {
       cancelAnimationFrame(rafRef.current);
       return;
     }
-
-    const audio = audioRef.current;
-    if (!audio) return;
 
     lastFrameRef.current = performance.now();
     silentAudioStartedRef.current = false;
@@ -197,11 +145,11 @@ export function Toolbar() {
 
         if (next >= off && !silentAudioStartedRef.current) {
           silentAudioStartedRef.current = true;
-          audio.muted = false;
-          void playEditorAudioAt(audio, 0);
+          editorAudioPlayer.setMuted(false);
+          playEditorAudioAt(0);
         }
-      } else if (!audio.paused && !audio.muted) {
-        setCurrentTime(audio.currentTime + off);
+      } else if (editorAudioPlayer.isAudible()) {
+        setCurrentTime(editorAudioPlayer.getAudioTime() + off);
       }
 
       rafRef.current = requestAnimationFrame(loop);
@@ -502,7 +450,6 @@ export function Toolbar() {
         )}
       </div>
 
-      <audio id="editor-audio" ref={audioRef} src={activeAudioUrl ?? undefined} />
       <PublishModal open={publishOpen} onClose={() => setPublishOpen(false)} />
     </header>
   );

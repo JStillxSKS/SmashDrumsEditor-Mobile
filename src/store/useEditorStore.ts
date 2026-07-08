@@ -55,11 +55,9 @@ import {
   snapBeat,
   snapTick,
 } from "../utils/resolution";
-import {
-  clampPlaybackSpeed,
-  syncAudioPlaybackRate,
-  syncAudioVolume,
-} from "../utils/audioPlayback";
+import { editorAudioContext } from "../utils/editorAudioContext";
+import { editorAudioPlayer, syncEditorAudioPlayerFromState } from "../utils/editorAudioPlayer";
+import { clampPlaybackSpeed } from "../utils/playbackSpeed";
 import { INDIES_AUDIO_FILE } from "../utils/audioFormat";
 import type { AudioSource } from "../utils/audioSource";
 import { detectBpm } from "../utils/bpmDetect";
@@ -198,7 +196,7 @@ type EditorState = {
   clearClipboardMessage: () => void;
 };
 
-const audioContext = new AudioContext();
+
 const initialMeta = createEmptyMeta();
 const initialCharts = { easy: [], normal: [], hard: [], extreme: [] } as Record<
   Difficulty,
@@ -374,16 +372,14 @@ export const useEditorStore = create<EditorState>((set, get) => {
   setSongVolume: (songVolume) => {
     const volume = Math.max(0, Math.min(1, songVolume));
     set({ songVolume: volume });
-    const audio = document.getElementById("editor-audio") as HTMLAudioElement | null;
-    syncAudioVolume(audio, volume);
+    editorAudioPlayer.setVolume(volume);
   },
   setHitVolume: (hitVolume) =>
     set({ hitVolume: Math.max(0, Math.min(1, hitVolume)) }),
   setPlaybackSpeed: (speed) => {
     const playbackSpeed = clampPlaybackSpeed(speed);
     set({ playbackSpeed });
-    const audio = document.getElementById("editor-audio") as HTMLAudioElement | null;
-    syncAudioPlaybackRate(audio, playbackSpeed);
+    editorAudioPlayer.setRate(playbackSpeed);
   },
   setOffset: (seconds) => {
     recordHistory("offset");
@@ -425,12 +421,13 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
   loadAudio: async (file) => {
     try {
-      if (audioContext.state === "suspended") await audioContext.resume();
+      if (editorAudioContext.state === "suspended") await editorAudioContext.resume();
       const buf = await file.arrayBuffer();
-      const decoded = await audioContext.decodeAudioData(buf.slice(0));
+      const decoded = await editorAudioContext.decodeAudioData(buf.slice(0));
       const prev = get().audioUrl;
       if (prev) URL.revokeObjectURL(prev);
       const url = URL.createObjectURL(file);
+      editorAudioPlayer.pause();
       set((s) => ({
         audioUrl: url,
         audioFileName: file.name,
@@ -442,10 +439,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         isPlaying: false,
         meta: { ...s.meta, FilePath: INDIES_AUDIO_FILE },
       }));
-      syncAudioVolume(
-        document.getElementById("editor-audio") as HTMLAudioElement | null,
-        get().songVolume
-      );
+      syncEditorAudioPlayerFromState(get());
     } catch {
       window.alert("Could not decode this audio file. Try OGG, MP3, or WAV.");
     }
@@ -453,9 +447,9 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
   loadDrumsAudio: async (file) => {
     try {
-      if (audioContext.state === "suspended") await audioContext.resume();
+      if (editorAudioContext.state === "suspended") await editorAudioContext.resume();
       const buf = await file.arrayBuffer();
-      const decoded = await audioContext.decodeAudioData(buf.slice(0));
+      const decoded = await editorAudioContext.decodeAudioData(buf.slice(0));
       const prev = get().drumsAudioUrl;
       if (prev) URL.revokeObjectURL(prev);
       const url = URL.createObjectURL(file);
@@ -464,12 +458,16 @@ export const useEditorStore = create<EditorState>((set, get) => {
         drumsAudioFileName: file.name,
         drumsAudioBuffer: decoded,
       });
+      syncEditorAudioPlayerFromState(get());
     } catch {
       window.alert("Could not decode this drums audio file. Try OGG, MP3, or WAV.");
     }
   },
 
-  setAudioSource: (audioSource) => set({ audioSource }),
+  setAudioSource: (audioSource) => {
+    set({ audioSource });
+    syncEditorAudioPlayerFromState(get());
+  },
 
   loadCoverImage: async (file) => {
     const prev = get().coverImageUrl;
