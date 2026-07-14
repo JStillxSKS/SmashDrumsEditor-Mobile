@@ -6,7 +6,8 @@ export default defineConfig({
   base: "./",
   plugins: [react()],
   server: {
-    host: "127.0.0.1",
+    // 0.0.0.0 so Android phones on the same LAN can open the dev server
+    host: true,
     port: 5174,
   },
 });

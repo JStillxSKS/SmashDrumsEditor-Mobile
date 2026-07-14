@@ -125,9 +125,12 @@ Clone Hero cymbal notes use lane + 64 (e.g. yellow cymbal = 66).
 ## Timing
 
 - **Resolution:** 480 ticks per beat (Clone Hero standard)
-- **SongTiming anchors:** `{ beat, timer }` pairs defining tempo map
-- **SongPhases:** `{ beat, phase, power, phaseName }` section markers
-- **SongOffsetSeconds:** seconds of chart time before audio begins
+- **SongTiming anchors:** `{ beat, timer }` pairs defining the tempo map
+  - **`beat` must be a whole number** — Smash `SongTimingItem.beat` is an `int`. Fractional values (e.g. `312.68125`) look correct in the editor but the game coerces them and audio drifts in-headset.
+  - Typical constant-tempo shape: `{0,0}`, `{1, 60/BPM}`, `{endBeat, endBeat*60/BPM}` with integer `endBeat`
+- **SongPhases:** `{ beat, phase, power, phaseName }` section markers (phase beats may be fractional)
+- **Chart notes:** `Beat` may be fractional (1/16 etc.)
+- **SongOffsetSeconds:** seconds of chart time before audio begins (often baked into `SongTiming[0].timer` on export with field set to `0`)
 
 ## Audio files
 

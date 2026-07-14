@@ -41,12 +41,16 @@ function formatOffset(seconds: number): string {
 }
 
 function serializeTimingAnchor(anchor: TimingAnchor): string {
-  return [
+  const lines = [
     "        {",
     `            "beat": ${formatTimingBeat(anchor.beat)},`,
-    `            "timer": ${formatTimer(anchor.timer)}`,
-    "        }",
-  ].join("\n");
+    `            "timer": ${formatTimer(anchor.timer)}${anchor.anchored ? "," : ""}`,
+  ];
+  if (anchor.anchored) {
+    lines.push(`            "anchored": true`);
+  }
+  lines.push("        }");
+  return lines.join("\n");
 }
 
 function serializeSongPhase(phase: SongPhase): string {

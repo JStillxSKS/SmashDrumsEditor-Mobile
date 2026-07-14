@@ -160,7 +160,7 @@ export function SidebarLeft() {
           </p>
         </div>
 
-        <div className="panel-section">
+        <div className="panel-section mobile-hide-strength">
           <p className="panel-section-title">Strength</p>
           <div className="btn-group btn-group-equal">
             {STRENGTHS.map((s) => (
@@ -271,7 +271,7 @@ export function SidebarLeft() {
 
       <CollapsibleSection
         title="Timing"
-        badge={timingView === "anchors" ? "Anchors" : "Phases"}
+        badge={timingView === "anchors" ? "BPM" : "Phases"}
         flex
         defaultOpen
       >
@@ -281,7 +281,7 @@ export function SidebarLeft() {
             value={timingView}
             onChange={(e) => setTimingView(e.target.value as TimingView)}
           >
-            <option value="anchors">Timing anchors</option>
+            <option value="anchors">BPM / Sync</option>
             <option value="phases">Song phases</option>
           </select>
         </label>

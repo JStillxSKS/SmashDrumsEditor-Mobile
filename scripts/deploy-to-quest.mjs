@@ -4,6 +4,9 @@
  *
  * Usage:
  *   node scripts/deploy-to-quest.mjs [path/to/map.indies]
+ *
+ * For day-to-day installs on the headset (pull from Indies-DB without USB),
+ * use Smash Indies (Desktop/SmashIndiesApp) sideloaded via SideQuest instead.
  */
 import fs from "fs";
 import path from "path";

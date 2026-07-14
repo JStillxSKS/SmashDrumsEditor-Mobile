@@ -58,7 +58,7 @@ Charts can start before audio begins (silent lead-in):
 
 Switch between two timing views:
 
-**Timing anchors** — beat/time sync points (exported to Clone Hero `[SyncTrack]`). Add anchors, edit beat and timer values, or click **Place on grid** and click the highway to drop an anchor.
+**BPM / Sync Track** — Moonscraper-style tempo markers (exported to Clone Hero `[SyncTrack]` and Smash `SongTiming`). Each marker sits on a **whole beat** (the game stores tempo beats as integers — fractional end anchors make the editor look synced and the headset drift). **BPM** applies forward until the next marker. Edit **Time** to stretch the previous segment (like ctrl-dragging a BPM in Moonscraper). **Lock** freezes that marker’s absolute time when you change earlier BPMs. Notes can still sit on 1/16s; only the tempo map is whole-beat.
 
 **Song phases** — section markers (Intro, Verse, Chorus, etc.) with intensity. Configure type, label, and intensity, then **Place on grid** to add phase boundaries on the chart.
 
@@ -117,6 +117,22 @@ The **strike bar** is the horizontal line near the bottom. Notes scroll toward i
 ### Placement modes
 
 When placing **timing anchors** or **song phases**, the highway enters placement mode (highlighted). Click the grid to drop the marker at that beat. Press `Esc` to exit.
+
+## Mobile charting (Android)
+
+Open the editor in **Chrome on Android** (phone or tablet). On first load you choose **Portrait** or **Landscape** (or desktop layout). Change later with **Layout** in the toolbar.
+
+| Control | What it does |
+|---------|----------------|
+| **Edit / Seek** | Toolbar toggle. **Edit** = place/remove notes. **Seek** = tap highway to move the playhead. |
+| **Place a note** | In **Edit**, tap a **color on the strike bar** (pink / red / blue / yellow / green / orange). Places that lane at the strike position. |
+| **Remove a note** | In **Edit**, tap an existing gem. |
+| **Pan** | Drag up/down on the highway. |
+| **Zoom** | Open **View** panel → **+** / **−** (or the zoom slider). No pinch zoom. |
+| **Song / View** | Open metadata/timing or snap/zoom/playback panels (overlay). |
+| **Import / Save** | Same as browser desktop — files download to the device. |
+
+Strength controls are hidden on mobile (notes use the default Neutral strength). Desktop Caps Lock + mouse charting is unchanged.
 
 ## Typical workflow
 

@@ -50,6 +50,10 @@ github-push-*.json
 # Local-only dev files (not shipped in releases)
 .local/
 mcps/
+agent-tools/
+terminals/
+scripts/__pycache__/
+**/__pycache__/
 
 # One-off local chart scripts (hardcoded paths)
 scripts/align-undead-timing.mjs

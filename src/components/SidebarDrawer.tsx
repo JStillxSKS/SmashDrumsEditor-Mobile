@@ -14,7 +14,7 @@ const STORAGE_KEYS: Record<DrawerSide, string> = {
   right: "sde-drawer-right",
 };
 
-function readDrawerPref(side: DrawerSide): boolean {
+function readDrawerPref(side: DrawerSide, defaultOpen: boolean): boolean {
   try {
     const v = localStorage.getItem(STORAGE_KEYS[side]);
     if (v === "0") return false;
@@ -22,32 +22,53 @@ function readDrawerPref(side: DrawerSide): boolean {
   } catch {
     // localStorage unavailable
   }
-  return true;
+  return defaultOpen;
 }
 
-export function useSidebarDrawers() {
-  const [leftOpen, setLeftOpen] = useState(() => readDrawerPref("left"));
-  const [rightOpen, setRightOpen] = useState(() => readDrawerPref("right"));
+/**
+ * @param mobileShell When true, drawers default closed and stay closed until opened
+ *   (mobile overlay panels). Desktop keeps previous open preference.
+ */
+export function useSidebarDrawers(mobileShell = false) {
+  const defaultOpen = !mobileShell;
+  const [leftOpen, setLeftOpen] = useState(() =>
+    readDrawerPref("left", defaultOpen)
+  );
+  const [rightOpen, setRightOpen] = useState(() =>
+    readDrawerPref("right", defaultOpen)
+  );
+
+  // When entering mobile shell, force panels closed so the highway is usable.
+  useEffect(() => {
+    if (mobileShell) {
+      setLeftOpen(false);
+      setRightOpen(false);
+    }
+  }, [mobileShell]);
 
   useEffect(() => {
+    if (mobileShell) return;
     try {
       localStorage.setItem(STORAGE_KEYS.left, leftOpen ? "1" : "0");
     } catch {
       // ignore
     }
-  }, [leftOpen]);
+  }, [leftOpen, mobileShell]);
 
   useEffect(() => {
+    if (mobileShell) return;
     try {
       localStorage.setItem(STORAGE_KEYS.right, rightOpen ? "1" : "0");
     } catch {
       // ignore
     }
-  }, [rightOpen]);
+  }, [rightOpen, mobileShell]);
 
   return {
     leftOpen,
     rightOpen,
+    setLeftOpen,
+    setRightOpen,
     toggleLeft: () => setLeftOpen((v) => !v),
     toggleRight: () => setRightOpen((v) => !v),
   };

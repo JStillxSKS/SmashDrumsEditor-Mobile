@@ -36,6 +36,7 @@ import { buildWaveformByTick, type WavePeak } from "../utils/waveform";
 import { getLaneWaveformBuffer } from "../utils/audioSource";
 import { SongOverview } from "./SongOverview";
 import { HIGHWAY_THEME as T } from "../theme/highway";
+import { useMobileLayout } from "../hooks/useMobileLayout";
 
 const STRIKE_OFFSET = 150;
 const PHASE_BLINK_MS = 550;
@@ -44,6 +45,13 @@ const LANE_HEADER_H = 44;
 const LANE_GAP = 6;
 const SELECTION_SCROLL_EDGE = 44;
 const SELECTION_SCROLL_MAX_TICKS = 18;
+/** Finger hit pad around strike receptors (place by tapping lane color). */
+const STRIKE_TAP_PAD = 48;
+/** Movement past this (px) becomes a pan, not a tap. */
+const POINTER_PAN_THRESHOLD = 12;
+/** Larger gem hit radius on coarse pointers. */
+const NOTE_HIT_PAD_MOBILE = 18;
+const NOTE_HIT_PAD_DESKTOP = 8;
 
 type NoteSelectionState = {
   dragging: boolean;
@@ -121,7 +129,7 @@ function drawNoteSelectionBox(
   ctx.restore();
 }
 
-/** Caps Lock + click erase — match the gem under the cursor, not just the snapped grid row. */
+/** Place/erase hit-test — match the gem under the pointer, not just the snapped grid row. */
 function findNoteAtPoint(
   x: number,
   y: number,
@@ -130,7 +138,8 @@ function findNoteAtPoint(
   scrollTick: number,
   ppt: number,
   gridRowPx: number,
-  notes: ChartNote[]
+  notes: ChartNote[],
+  hitPad = NOTE_HIT_PAD_DESKTOP
 ): ChartNote | null {
   const col = columnAtX(x, 0, canvasW);
   if (col === null) return null;
@@ -147,7 +156,7 @@ function findNoteAtPoint(
     const tick = beatToTick(note.Beat);
     const noteY = sy - (tick - scrollTick) * ppt;
     const { h } = noteBoxSize(laneW, gridRowPx);
-    const halfH = h / 2 + 8;
+    const halfH = h / 2 + hitPad;
     if (y < noteY - halfH || y > noteY + halfH) continue;
     const dist = Math.abs(y - noteY);
     if (dist < bestDist) {
@@ -157,6 +166,11 @@ function findNoteAtPoint(
   }
 
   return best;
+}
+
+function isStrikeBarTap(y: number, canvasH: number): boolean {
+  const sy = canvasH - STRIKE_OFFSET;
+  return Math.abs(y - sy) <= STRIKE_TAP_PAD;
 }
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -414,11 +428,20 @@ export function ChartEditor() {
   const noteHitRef = useRef<Map<string, number>>(new Map());
   const noteSelectionRef = useRef<NoteSelectionState | null>(null);
   const selectionAutoScrollRef = useRef(0);
+  const pointerGestureRef = useRef<{
+    id: number;
+    startX: number;
+    startY: number;
+    lastY: number;
+    panning: boolean;
+    selecting: boolean;
+  } | null>(null);
   const [, setSelectionRevision] = useState(0);
   const bumpSelectionRevision = useCallback(
     () => setSelectionRevision((revision) => revision + 1),
     []
   );
+  const { isMobileShell } = useMobileLayout();
 
   const {
     meta,
@@ -437,11 +460,9 @@ export function ChartEditor() {
     duration,
     waveScale,
     placementMode,
+    editorTool,
     toggleNote,
-    removeNote,
     setPlacementMode,
-    placePhaseAtBeat,
-    placeAnchorAtBeat,
     copyNotesInRange,
     copyNotesInSelection,
     deleteNotesInSelection,
@@ -1071,6 +1092,69 @@ export function ChartEditor() {
     bumpSelectionRevision,
   ]);
 
+  const applySeekAt = useCallback(
+    (rawTick: number) => {
+      const state = useEditorStore.getState();
+      const seekChart = beatToTime(rawTick / RESOLUTION, state.meta.SongTiming);
+      const maxChart =
+        state.duration > 0
+          ? state.duration + getSongOffset(state.meta)
+          : seekChart;
+      seekChartTime(Math.max(0, Math.min(seekChart, maxChart)));
+    },
+    []
+  );
+
+  /** Place/remove notes for mobile edit tool and desktop Caps Lock mode. */
+  const applyEditAt = useCallback(
+    (x: number, y: number, canvasW: number, canvasH: number, mobile: boolean) => {
+      const state = useEditorStore.getState();
+      const activeScroll = scrollTickAtClick();
+      const sy = canvasH - STRIKE_OFFSET;
+      const rawTick = activeScroll + (sy - y) / state.pixelsPerTick;
+      if (rawTick < 0) return;
+
+      const col = columnAtX(x, 0, canvasW);
+      if (col === null) return;
+      const lane = laneIdFromColumn(col);
+      const gridRowPx = visualGridRowPixels(state.pixelsPerTick);
+      const hitPad = mobile ? NOTE_HIT_PAD_MOBILE : NOTE_HIT_PAD_DESKTOP;
+
+      // Mobile: tap a colored receptor on the strike bar → place that lane at strike.
+      if (mobile && isStrikeBarTap(y, canvasH)) {
+        const strikeTick = snapTick(activeScroll, state.snapTicks);
+        if (strikeTick < 0) return;
+        state.setSelectedLane(lane);
+        state.toggleNote(strikeTick / RESOLUTION, lane);
+        return;
+      }
+
+      const hit = findNoteAtPoint(
+        x,
+        y,
+        canvasH,
+        canvasW,
+        activeScroll,
+        state.pixelsPerTick,
+        gridRowPx,
+        state.charts[state.difficulty],
+        hitPad
+      );
+      if (hit) {
+        state.removeNote(hit.Beat, hit.Id);
+        return;
+      }
+
+      const tick = snapTick(rawTick, state.snapTicks);
+      if (tick < 0) return;
+      const strikeTick = snapTick(activeScroll, state.snapTicks);
+      if (tick < strikeTick) return;
+      state.setSelectedLane(lane);
+      state.toggleNote(tick / RESOLUTION, lane);
+    },
+    []
+  );
+
   useEffect(() => {
     const tickSelectionAutoScroll = () => {
       const selection = noteSelectionRef.current;
@@ -1124,19 +1208,80 @@ export function ChartEditor() {
       selectionAutoScrollRef.current = requestAnimationFrame(tickSelectionAutoScroll);
     };
 
-    const onMove = (e: MouseEvent) => {
+    const onPointerMove = (e: PointerEvent) => {
+      const gesture = pointerGestureRef.current;
+      if (gesture && e.pointerId === gesture.id) {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const dy = y - gesture.startY;
+        const dx = x - gesture.startX;
+
+        if (gesture.selecting) {
+          const selection = noteSelectionRef.current;
+          if (!selection?.dragging) return;
+          const state = useEditorStore.getState();
+          const chart = pointerToChart(
+            x,
+            y,
+            state.scrollTick,
+            rect.width,
+            rect.height,
+            state.pixelsPerTick
+          );
+          noteSelectionRef.current = {
+            ...selection,
+            currentTick: chart.tick,
+            currentCol: chart.col,
+            pointerX: x,
+            pointerY: y,
+          };
+          if (!selectionAutoScrollRef.current) {
+            selectionAutoScrollRef.current = requestAnimationFrame(tickSelectionAutoScroll);
+          }
+          return;
+        }
+
+        if (!gesture.panning) {
+          if (Math.hypot(dx, dy) >= POINTER_PAN_THRESHOLD) {
+            gesture.panning = true;
+            if (noteSelectionRef.current) {
+              noteSelectionRef.current = null;
+              bumpSelectionRevision();
+            }
+          }
+        }
+
+        if (gesture.panning) {
+          const state = useEditorStore.getState();
+          if (!state.isPlaying) {
+            const deltaY = y - gesture.lastY;
+            seekScrollTick(state.scrollTick + deltaY / state.pixelsPerTick);
+          }
+          gesture.lastY = y;
+        }
+        return;
+      }
+
+      // Desktop selection drag without pointer capture (mouse path fallback)
       const selection = noteSelectionRef.current;
       if (!selection?.dragging) return;
-
       const canvas = canvasRef.current;
       if (!canvas) return;
-
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const state = useEditorStore.getState();
-      const chart = pointerToChart(x, y, state.scrollTick, rect.width, rect.height, state.pixelsPerTick);
-
+      const chart = pointerToChart(
+        x,
+        y,
+        state.scrollTick,
+        rect.width,
+        rect.height,
+        state.pixelsPerTick
+      );
       noteSelectionRef.current = {
         ...selection,
         currentTick: chart.tick,
@@ -1144,46 +1289,113 @@ export function ChartEditor() {
         pointerX: x,
         pointerY: y,
       };
-
       if (!selectionAutoScrollRef.current) {
         selectionAutoScrollRef.current = requestAnimationFrame(tickSelectionAutoScroll);
       }
     };
 
-    const onUp = () => {
+    const endSelectionDrag = () => {
       const selection = noteSelectionRef.current;
       if (!selection?.dragging) return;
-
       if (selectionAutoScrollRef.current) {
         cancelAnimationFrame(selectionAutoScrollRef.current);
         selectionAutoScrollRef.current = 0;
       }
-
       noteSelectionRef.current = { ...selection, dragging: false };
       bumpSelectionRevision();
     };
 
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    const onPointerUp = (e: PointerEvent) => {
+      const gesture = pointerGestureRef.current;
+      if (!gesture || e.pointerId !== gesture.id) {
+        if (noteSelectionRef.current?.dragging) endSelectionDrag();
+        return;
+      }
+
+      const canvas = canvasRef.current;
+      const wasPanning = gesture.panning;
+      const wasSelecting = gesture.selecting;
+      pointerGestureRef.current = null;
+
+      try {
+        canvas?.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+
+      if (wasSelecting) {
+        endSelectionDrag();
+        return;
+      }
+
+      if (wasPanning || !canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (x < 0 || x > rect.width || y < LANE_HEADER_H) return;
+
+      const state = useEditorStore.getState();
+      const sy = rect.height - STRIKE_OFFSET;
+      const activeScroll = scrollTickAtClick();
+      const rawTick = activeScroll + (sy - y) / state.pixelsPerTick;
+      if (rawTick < 0) return;
+
+      const tick = snapTick(rawTick, state.snapTicks);
+      const beat = tick / RESOLUTION;
+
+      if (state.placementMode === "phase") {
+        state.placePhaseAtBeat(beat);
+        return;
+      }
+      if (state.placementMode === "anchor") {
+        state.placeAnchorAtBeat(beat);
+        return;
+      }
+
+      const mobile = isMobileShell;
+      if (mobile) {
+        if (state.editorTool === "seek") {
+          applySeekAt(rawTick);
+          return;
+        }
+        applyEditAt(x, y, rect.width, rect.height, true);
+        return;
+      }
+
+      // Desktop: Caps Lock off = seek; on = place/delete
+      if (!e.getModifierState("CapsLock")) {
+        applySeekAt(rawTick);
+        return;
+      }
+      applyEditAt(x, y, rect.width, rect.height, false);
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
       if (selectionAutoScrollRef.current) {
         cancelAnimationFrame(selectionAutoScrollRef.current);
         selectionAutoScrollRef.current = 0;
       }
     };
-  }, [bumpSelectionRevision]);
+  }, [applyEditAt, applySeekAt, bumpSelectionRevision, isMobileShell]);
 
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (e.shiftKey && e.button === 0 && !isPlaying) {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      if (y < LANE_HEADER_H) return;
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
 
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Desktop Shift+drag selection (also works with mouse on mobile shell if connected)
+    if (e.shiftKey && !isPlaying && y >= LANE_HEADER_H) {
       const state = useEditorStore.getState();
       const chart = pointerToChart(
         x,
@@ -1202,7 +1414,16 @@ export function ChartEditor() {
         pointerX: x,
         pointerY: y,
       };
+      pointerGestureRef.current = {
+        id: e.pointerId,
+        startX: x,
+        startY: y,
+        lastY: y,
+        panning: false,
+        selecting: true,
+      };
       bumpSelectionRevision();
+      canvas.setPointerCapture(e.pointerId);
       e.preventDefault();
       return;
     }
@@ -1212,62 +1433,16 @@ export function ChartEditor() {
       bumpSelectionRevision();
     }
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    if (x < 0 || x > rect.width || y < LANE_HEADER_H) return;
-
-    const sy = rect.height - STRIKE_OFFSET;
-    const activeScroll = scrollTickAtClick();
-    const rawTick = activeScroll + (sy - y) / pixelsPerTick;
-    if (rawTick < 0) return;
-
-    const tick = snapTick(rawTick, snapTicks);
-    const beat = tick / RESOLUTION;
-
-    if (placementMode === "phase") {
-      placePhaseAtBeat(beat);
-      return;
-    }
-    if (placementMode === "anchor") {
-      placeAnchorAtBeat(beat);
-      return;
-    }
-
-    if (!e.getModifierState("CapsLock")) {
-      const seekChart = beatToTime(rawTick / RESOLUTION, meta.SongTiming);
-      const maxChart = duration > 0 ? duration + getSongOffset(meta) : seekChart;
-      seekChartTime(Math.max(0, Math.min(seekChart, maxChart)));
-      return;
-    }
-
-    const col = columnAtX(x, 0, rect.width);
-    if (col === null) return;
-    const lane = laneIdFromColumn(col);
-    if (tick < 0) return;
-
-    const gridRowPx = visualGridRowPixels(pixelsPerTick);
-    const hit = findNoteAtPoint(
-      x,
-      y,
-      rect.height,
-      rect.width,
-      activeScroll,
-      pixelsPerTick,
-      gridRowPx,
-      charts[difficulty]
-    );
-    if (hit) {
-      removeNote(hit.Beat, hit.Id);
-      return;
-    }
-
-    const strikeTick = snapTick(activeScroll, snapTicks);
-    if (tick < strikeTick) return;
-
-    toggleNote(beat, lane);
+    pointerGestureRef.current = {
+      id: e.pointerId,
+      startX: x,
+      startY: y,
+      lastY: y,
+      panning: false,
+      selecting: false,
+    };
+    canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
   };
 
   const wrapModeClass =
@@ -1275,21 +1450,36 @@ export function ChartEditor() {
       ? "mode-phase"
       : placementMode === "anchor"
         ? "mode-anchor"
-        : "";
+        : isMobileShell
+          ? editorTool === "seek"
+            ? "mode-seek"
+            : "mode-edit"
+          : "";
 
   const hasNoteSelection =
     noteSelectionRef.current !== null && !noteSelectionRef.current.dragging;
 
   return (
-    <div className="chart-stage">
+    <div className={`chart-stage${isMobileShell ? " chart-stage--mobile" : ""}`}>
       <div className={`chart-wrap ${wrapModeClass}`} ref={wrapRef}>
-        <canvas ref={canvasRef} className="chart-canvas" onMouseDown={handleCanvasMouseDown} />
+        <canvas
+          ref={canvasRef}
+          className="chart-canvas"
+          onPointerDown={handleCanvasPointerDown}
+        />
         {placementMode && (
           <div className="placement-hint">
             {placementMode === "phase"
-              ? "Phase placement — click grid"
-              : "Anchor placement — click grid"}
+              ? "Phase placement — tap grid"
+              : "Anchor placement — tap grid"}
             <span className="placement-hint-key">Esc</span>
+          </div>
+        )}
+        {isMobileShell && !placementMode && (
+          <div className="placement-hint mobile-tool-hint">
+            {editorTool === "seek"
+              ? "Seek — tap highway · drag to pan"
+              : "Edit — tap strike color to place · tap gem to remove · drag to pan"}
           </div>
         )}
         {!placementMode && hasNoteSelection && (

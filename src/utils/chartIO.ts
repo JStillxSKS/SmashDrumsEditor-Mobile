@@ -14,7 +14,7 @@ import {
   anchorsFromBpm,
   beatToTime,
   bpmAtAnchor,
-  bpmFromAnchors,
+  bpmAtBeat,
   maxContentBeat,
   sortTimingAnchors,
   timeToBeat,
@@ -77,19 +77,6 @@ function parseChartNumber(raw: string): number {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function bpmAtBeat(beat: number, anchors: TimingAnchor[]): number {
-  const sorted = sortTimingAnchors(anchors);
-  if (sorted.length < 2) return bpmFromAnchors(sorted);
-
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const a = sorted[i];
-    const b = sorted[i + 1];
-    if (beat >= a.beat && beat <= b.beat) return bpmAtAnchor(sorted, i);
-  }
-
-  return bpmAtAnchor(sorted, sorted.length - 2);
-}
-
 /** Tempo-change anchors only — not the closing duration anchor. */
 function tempoChangeAnchors(anchors: TimingAnchor[], toleranceBpm = 0.1): TimingAnchor[] {
   const sorted = sortTimingAnchors(anchors);
@@ -128,8 +115,10 @@ function syncEndBeat(
 }
 
 /**
- * Clone Hero [SyncTrack] — start anchor, optional tempo changes (each with TS 4),
- * closing anchor at song end with TS 4 + A + B (see TCBAITW notes.chart).
+ * Clone Hero [SyncTrack] — Moonscraper layout:
+ * - `B` = milli-BPM at tick (tempo applies forward)
+ * - `A` = absolute time lock only when the marker is anchored
+ * - `TS 4` at tempo changes
  */
 function buildSyncTrackLines(
   meta: MetaJson,
@@ -142,7 +131,9 @@ function buildSyncTrackLines(
 
   const startBpm = Math.round(bpmAtAnchor(anchors, 0) * 1000);
   lines.push("  0 = TS 4");
-  lines.push("  0 = A 0");
+  if (changes[0]?.anchored) {
+    lines.push("  0 = A 0");
+  }
   lines.push(`  0 = B ${startBpm}`);
 
   for (let i = 1; i < changes.length; i++) {
@@ -150,24 +141,29 @@ function buildSyncTrackLines(
     const tick = Math.round(anchor.beat * RESOLUTION);
     if (tick <= 0) continue;
 
-    const micros = Math.round(anchor.timer * 1_000_000);
+    // BPM applying forward from this marker (segment starting here).
     const bpm = Math.round(bpmAtBeat(anchor.beat, anchors) * 1000);
     lines.push(`  ${tick} = TS 4`);
-    lines.push(`  ${tick} = A ${micros}`);
+    if (anchor.anchored) {
+      const micros = Math.round(anchor.timer * 1_000_000);
+      lines.push(`  ${tick} = A ${micros}`);
+    }
     lines.push(`  ${tick} = B ${bpm}`);
   }
 
+  // Optional end B so long charts keep a defined tail (MS often omits this).
   const endBeat = syncEndBeat(meta, charts, duration);
   const endTick = Math.round(endBeat * RESOLUTION);
-  const endMicros = Math.round(beatToTime(endBeat, anchors) * 1_000_000);
   const endBpm = Math.round(bpmAtBeat(endBeat, anchors) * 1000);
-
   const lastChangeTick =
     changes.length > 0 ? Math.round(changes[changes.length - 1].beat * RESOLUTION) : 0;
 
   if (endTick > lastChangeTick) {
+    const endAnchor = anchors.find((a) => Math.abs(a.beat - endBeat) < 1 / RESOLUTION);
     lines.push(`  ${endTick} = TS 4`);
-    lines.push(`  ${endTick} = A ${endMicros}`);
+    if (endAnchor?.anchored) {
+      lines.push(`  ${endTick} = A ${Math.round(beatToTime(endBeat, anchors) * 1_000_000)}`);
+    }
     lines.push(`  ${endTick} = B ${endBpm}`);
   }
 
@@ -417,6 +413,7 @@ function anchorsFromChartBpmEvents(
     {
       beat: prevTick / RESOLUTION,
       timer: Math.round(timer * 1_000_000) / 1_000_000,
+      ...(aByTick.has(prevTick) ? { anchored: true as const } : {}),
     },
   ];
 
@@ -424,7 +421,8 @@ function anchorsFromChartBpmEvents(
     const tick = ticks[i];
     const beats = (tick - prevTick) / RESOLUTION;
     const absA = aByTick.get(tick);
-    if (absA !== undefined && Number.isFinite(absA)) {
+    const hasAnchor = absA !== undefined && Number.isFinite(absA);
+    if (hasAnchor) {
       timer = absA / 1_000_000;
     } else {
       timer += beats * (60 / prevBpm);
@@ -433,6 +431,7 @@ function anchorsFromChartBpmEvents(
     anchors.push({
       beat: tick / RESOLUTION,
       timer: Math.round(timer * 1_000_000) / 1_000_000,
+      ...(hasAnchor ? { anchored: true as const } : {}),
     });
 
     const nextMilli = bByTick.get(tick);

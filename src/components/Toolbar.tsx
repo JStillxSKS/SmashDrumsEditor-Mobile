@@ -32,9 +32,18 @@ import { bpmFromAnchors } from "../utils/timing";
 import { beatToTime, timeToBeat } from "../utils/timing";
 import { pickImportFileDesktop } from "../utils/importFile";
 import { redoDepth, undoDepth } from "../store/history";
+import { useMobileLayout } from "../hooks/useMobileLayout";
 
 const BPM_MIN = 40;
 const BPM_MAX = 300;
+
+export type ToolbarProps = {
+  isMobileShell?: boolean;
+  onToggleLeft?: () => void;
+  onToggleRight?: () => void;
+  leftOpen?: boolean;
+  rightOpen?: boolean;
+};
 
 function shortenPath(p: string, max = 42): string {
   if (p.length <= max) return p;
@@ -43,9 +52,16 @@ function shortenPath(p: string, max = 42): string {
   return `…\\${parts.slice(-2).join("\\")}`;
 }
 
-export function Toolbar() {
+export function Toolbar({
+  isMobileShell = false,
+  onToggleLeft,
+  onToggleRight,
+  leftOpen = false,
+  rightOpen = false,
+}: ToolbarProps) {
   const [publishOpen, setPublishOpen] = useState(false);
   const [outputDir, setOutputDir] = useState<string | null>(null);
+  const { openGate } = useMobileLayout();
   const {
     drumsAudioUrl,
     audioSource,
@@ -84,6 +100,8 @@ export function Toolbar() {
     historyVersion,
     undo,
     redo,
+    editorTool,
+    setEditorTool,
   } = useEditorStore();
 
   const committedBpm = bpmFromAnchors(meta.SongTiming);
@@ -341,6 +359,54 @@ export function Toolbar() {
             ↷
           </button>
         </div>
+        {isMobileShell && (
+          <div className="mobile-tool-toggle" role="group" aria-label="Tap tool">
+            <button
+              type="button"
+              className={editorTool === "edit" ? "btn btn-sm active" : "btn btn-sm"}
+              title="Edit — tap strike bar colors to place notes"
+              onClick={() => setEditorTool("edit")}
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              className={editorTool === "seek" ? "btn btn-sm active" : "btn btn-sm"}
+              title="Seek — tap highway to move playhead"
+              onClick={() => setEditorTool("seek")}
+            >
+              Seek
+            </button>
+          </div>
+        )}
+        {isMobileShell && (
+          <div className="mobile-panel-btns">
+            <button
+              type="button"
+              className={leftOpen ? "btn btn-sm active" : "btn btn-sm"}
+              title="Song & chart panel"
+              onClick={onToggleLeft}
+            >
+              Song
+            </button>
+            <button
+              type="button"
+              className={rightOpen ? "btn btn-sm active" : "btn btn-sm"}
+              title="View & playback panel (zoom)"
+              onClick={onToggleRight}
+            >
+              View
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              title="Change portrait / landscape layout"
+              onClick={openGate}
+            >
+              Layout
+            </button>
+          </div>
+        )}
         <button className="btn play-btn" onClick={togglePlay} disabled={!canPlay} title="Play / Pause (Space)">
           {isPlaying ? (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">

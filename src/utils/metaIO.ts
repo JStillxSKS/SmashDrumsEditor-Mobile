@@ -1,4 +1,10 @@
-import type { ChartNote, Difficulty, MetaJson, SongPhase, TimingAnchor } from "../types/meta";
+import type {
+  ChartNote,
+  Difficulty,
+  MetaJson,
+  SongPhase,
+  TimingAnchor,
+} from "../types/meta";
 import {
   clampPhaseId,
   clampPower,
@@ -8,7 +14,7 @@ import {
 import { normalizeChartNotes, sortChartNotes } from "./chartNotes";
 import { getSongOffset } from "./offset";
 import { serializeMetaJson } from "./metaSerialize";
-import { sortTimingAnchors } from "./timing";
+import { normalizeSongTimingForGame, sortTimingAnchors } from "./timing";
 
 function normalizeSongPhase(raw: Partial<SongPhase>): SongPhase {
   const phase = clampPhaseId(raw.phase ?? 1);
@@ -100,7 +106,8 @@ export function unbakeOffsetFromTiming(
   }));
 
   if (shifted[0]?.beat === 0) {
-    shifted[0] = { ...shifted[0], timer: 0 };
+    shifted[0] = { ...shifted[0], timer: 0, anchored: undefined };
+    delete shifted[0].anchored;
   }
 
   return shifted;
@@ -113,17 +120,25 @@ export function withOffsetInTiming(
   return bakeOffsetIntoTiming(timing, offsetSeconds);
 }
 
-/** Offset is editor-only — bake into SongTiming[0].timer and zero SongOffsetSeconds on export. */
+/**
+ * Prepare meta for .indies / game load.
+ *
+ * 1. Integer SongTiming beats (game `SongTimingItem.beat` is int — fractional
+ *    end anchors make the editor look synced and the headset drift).
+ * 2. Bake offset into SongTiming[0].timer and zero SongOffsetSeconds
+ *    (Indies convention; game reads the baked timers).
+ */
 export function prepareMetaForExport(
   meta: MetaJson,
   charts: Record<Difficulty, ChartNote[]>
 ): MetaJson {
   const offset = getSongOffset(meta);
+  const gameTiming = normalizeSongTimingForGame(meta.SongTiming);
   return buildMetaJson(
     {
       ...meta,
       SongOffsetSeconds: 0,
-      SongTiming: bakeOffsetIntoTiming(meta.SongTiming, offset),
+      SongTiming: bakeOffsetIntoTiming(gameTiming, offset),
     },
     charts
   );
@@ -188,17 +203,26 @@ export function normalizeImportedTiming(
   };
 }
 
+function normalizeTimingAnchor(raw: Partial<TimingAnchor>): TimingAnchor {
+  const beat = Number(raw.beat) || 0;
+  const timer = Number(raw.timer) || 0;
+  const anchored = raw.anchored === true ? true : undefined;
+  return anchored ? { beat, timer, anchored } : { beat, timer };
+}
+
 export function parseMetaJson(raw: string): MetaJson {
   const data = JSON.parse(raw) as Partial<MetaJson>;
   const base = createEmptyMeta();
   const rawTiming =
     data.SongTiming && data.SongTiming.length >= 2
-      ? sortTimingAnchors(data.SongTiming)
+      ? sortTimingAnchors(data.SongTiming.map((a) => normalizeTimingAnchor(a)))
       : base.SongTiming;
   const { timing, offset } = normalizeImportedTiming(
     rawTiming,
     data.SongOffsetSeconds ?? 0
   );
+  // Same integer-beat rule the game uses — keep editor/export identical.
+  const gameTiming = normalizeSongTimingForGame(timing);
 
   return {
     NameArtist: data.NameArtist ?? base.NameArtist,
@@ -207,7 +231,7 @@ export function parseMetaJson(raw: string): MetaJson {
     IndiesDbMapId: data.IndiesDbMapId?.trim() || undefined,
     FilePath: data.FilePath ?? "",
     SongOffsetSeconds: offset,
-    SongTiming: timing,
+    SongTiming: gameTiming,
     SongPhases:
       data.SongPhases && data.SongPhases.length >= 1
         ? sortSongPhases(data.SongPhases.map(normalizeSongPhase))

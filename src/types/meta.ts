@@ -10,7 +10,14 @@ export type ChartNote = {
 
 export type TimingAnchor = {
   beat: number;
+  /** Absolute chart time (seconds), derived from the BPM chain like Moonscraper. */
   timer: number;
+  /**
+   * Moonscraper-style anchor lock.
+   * When true, this marker’s absolute time stays fixed while earlier BPMs are
+   * edited — the segment before it is stretched/squeezed to hit this time.
+   */
+  anchored?: boolean;
 };
 
 export type PhaseId = 1 | 2 | 3 | 4 | 5 | 6 | 7;

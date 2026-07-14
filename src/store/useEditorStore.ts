@@ -85,6 +85,12 @@ import {
   applyConstantBpmChange,
   beatToTime,
   bpmFromAnchors,
+  insertMarkerAtBeat,
+  removeMarkerAtIndex,
+  setMarkerAnchored,
+  setMarkerBeat,
+  setMarkerBpm,
+  setMarkerTime,
   sortTimingAnchors,
   timeToBeat,
 } from "../utils/timing";
@@ -97,12 +103,17 @@ import {
   type HistoryTag,
 } from "./history";
 
+/** Mobile highway tool: place notes vs scrub playhead. Desktop still uses Caps Lock. */
+export type EditorTool = "edit" | "seek";
+
 type EditorState = {
   meta: MetaJson;
   charts: Record<Difficulty, ChartNote[]>;
   difficulty: Difficulty;
   selectedLane: 0 | 1 | 2 | 3 | 4 | 5;
   strength: 0 | 1 | 2;
+  /** Touch/mobile: single-tap places notes (edit) or seeks (seek). */
+  editorTool: EditorTool;
   snapTicks: number;
   scrollTick: number;
   pixelsPerTick: number;
@@ -163,6 +174,7 @@ type EditorState = {
   setDifficulty: (d: Difficulty) => void;
   setSelectedLane: (lane: 0 | 1 | 2 | 3 | 4 | 5) => void;
   setStrength: (s: 0 | 1 | 2) => void;
+  setEditorTool: (tool: EditorTool) => void;
   setSnapTicks: (ticks: number) => void;
   setScrollTick: (tick: number) => void;
   setPixelsPerTick: (v: number) => void;
@@ -195,6 +207,8 @@ type EditorState = {
   addPhaseAtPlayhead: () => void;
   removePhase: (index: number) => void;
   updateAnchor: (index: number, patch: Partial<TimingAnchor>) => void;
+  /** Moonscraper-style: set BPM applying forward from this marker. */
+  setAnchorBpm: (index: number, bpm: number) => void;
   addAnchor: () => void;
   addAnchorAtPlayhead: () => void;
   removeAnchor: (index: number) => void;
@@ -247,6 +261,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
   difficulty: "extreme",
   selectedLane: 1,
   strength: 1,
+  editorTool: "edit",
   snapTicks: 240,
   scrollTick: 0,
   pixelsPerTick: FIXED_PIXELS_PER_TICK,
@@ -489,6 +504,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
   setDifficulty: (difficulty) => set({ difficulty }),
   setSelectedLane: (selectedLane) => set({ selectedLane }),
   setStrength: (strength) => set({ strength }),
+  setEditorTool: (editorTool) => set({ editorTool }),
   setSnapTicks: (snapTicks) => set({ snapTicks }),
   setScrollTick: (scrollTick) => set({ scrollTick: Math.max(0, scrollTick) }),
   setPixelsPerTick: (pixelsPerTick) => {
@@ -1133,33 +1149,46 @@ export const useEditorStore = create<EditorState>((set, get) => {
   updateAnchor: (index, patch) => {
     recordHistory("timing");
     set((s) => {
-      const anchors = sortTimingAnchors(s.meta.SongTiming);
-      if (index < 0 || index >= anchors.length) return s;
-      const next = { ...anchors[index], ...patch };
-      if (patch.beat !== undefined) next.beat = Math.max(0, patch.beat);
-      if (patch.timer !== undefined) next.timer = Math.max(0, patch.timer);
-      anchors[index] = next;
-      const timing = sortTimingAnchors(anchors);
-      if (index === 0 && timing[0]?.beat === 0 && patch.timer !== undefined) {
-        const offset = Math.max(0, Math.round(patch.timer * 1000) / 1000);
-        timing[0] = { ...timing[0], timer: 0 };
-        return {
-          meta: {
-            ...s.meta,
-            SongOffsetSeconds: offset,
-            SongTiming: timing,
-          },
-        };
+      let timing = sortTimingAnchors(s.meta.SongTiming);
+      if (index < 0 || index >= timing.length) return s;
+
+      // Moonscraper-style: beat / BPM / lock / time each retime the chain.
+      if (patch.beat !== undefined) {
+        timing = setMarkerBeat(timing, index, patch.beat);
       }
+      if (patch.anchored !== undefined) {
+        timing = setMarkerAnchored(timing, index, Boolean(patch.anchored));
+      }
+      if (patch.timer !== undefined) {
+        if (index === 0 && timing[0]?.beat === 0) {
+          // First marker time is song offset (MS Offset), not a tempo point.
+          const offset = Math.max(0, Math.round(patch.timer * 1000) / 1000);
+          timing = timing.map((a, i) => (i === 0 ? { ...a, timer: 0 } : a));
+          return {
+            meta: {
+              ...s.meta,
+              SongOffsetSeconds: offset,
+              SongTiming: timing,
+            },
+          };
+        }
+        timing = setMarkerTime(timing, index, patch.timer);
+      }
+
       if (timing[0]?.beat === 0) {
-        timing[0] = { ...timing[0], timer: 0 };
+        timing = timing.map((a, i) => (i === 0 ? { ...a, timer: 0 } : a));
       }
-      return {
-        meta: {
-          ...s.meta,
-          SongTiming: timing,
-        },
-      };
+
+      return { meta: { ...s.meta, SongTiming: timing } };
+    });
+  },
+
+  /** Set the BPM that applies forward from this marker (Moonscraper B value). */
+  setAnchorBpm: (index, bpm) => {
+    recordHistory("timing");
+    set((s) => {
+      const timing = setMarkerBpm(s.meta.SongTiming, index, bpm);
+      return { meta: { ...s.meta, SongTiming: timing } };
     });
   },
 
@@ -1168,36 +1197,26 @@ export const useEditorStore = create<EditorState>((set, get) => {
     set((s) => {
       const anchors = sortTimingAnchors(s.meta.SongTiming);
       const last = anchors[anchors.length - 1];
-      const beat = last.beat + 4;
-      const anchor: TimingAnchor = { beat, timer: beatToTime(beat, anchors) };
-      return { meta: { ...s.meta, SongTiming: sortTimingAnchors([...anchors, anchor]) } };
+      // Place 4 beats after last marker on the grid (inherits prior BPM).
+      const timing = insertMarkerAtBeat(anchors, last.beat + 4);
+      return { meta: { ...s.meta, SongTiming: timing } };
     });
   },
 
   addAnchorAtPlayhead: () => {
     recordHistory("timing");
     set((s) => {
-      const beat = Math.round(timeToBeat(s.currentTime, s.meta.SongTiming) * 1000) / 1000;
-      const timer = Math.round(s.currentTime * 1000) / 1000;
-      const anchor: TimingAnchor = { beat: Math.max(0, beat), timer: Math.max(0, timer) };
-      const anchors = sortTimingAnchors([...s.meta.SongTiming, anchor]);
-      const deduped = anchors.filter(
-        (item, idx, list) =>
-          idx === 0 ||
-          Math.abs(item.beat - list[idx - 1].beat) > 1 / 480 ||
-          Math.abs(item.timer - list[idx - 1].timer) > 0.001
-      );
-      return { meta: { ...s.meta, SongTiming: deduped.length >= 2 ? deduped : anchors } };
+      const beat = timeToBeat(s.currentTime, s.meta.SongTiming);
+      const timing = insertMarkerAtBeat(s.meta.SongTiming, beat);
+      return { meta: { ...s.meta, SongTiming: timing } };
     });
   },
 
   removeAnchor: (index) => {
     recordHistory("timing");
     set((s) => {
-      const anchors = sortTimingAnchors(s.meta.SongTiming);
-      if (anchors.length <= 2 || index < 0 || index >= anchors.length) return s;
-      anchors.splice(index, 1);
-      return { meta: { ...s.meta, SongTiming: anchors } };
+      const timing = removeMarkerAtIndex(s.meta.SongTiming, index);
+      return { meta: { ...s.meta, SongTiming: timing } };
     });
   },
 
@@ -1240,25 +1259,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
     recordHistory("timing");
     set((s) => {
       const snapped = snapBeat(Math.max(0, beat), s.snapTicks);
-      const anchors = sortTimingAnchors(s.meta.SongTiming);
-      const timer = Math.round(beatToTime(snapped, anchors) * 1000) / 1000;
-      const existing = anchors.findIndex((a) => beatsEqual(a.beat, snapped));
-      const next: TimingAnchor = { beat: snapped, timer };
-      if (existing >= 0) anchors[existing] = next;
-      else anchors.push(next);
-      const deduped = sortTimingAnchors(anchors).filter(
-        (item, idx, list) =>
-          idx === 0 ||
-          Math.abs(item.beat - list[idx - 1].beat) > 1 / 480 ||
-          Math.abs(item.timer - list[idx - 1].timer) > 0.001
-      );
-      return {
-        meta: {
-          ...s.meta,
-          SongTiming: deduped.length >= 2 ? deduped : sortTimingAnchors(anchors),
-        },
-      };
+      const timing = insertMarkerAtBeat(s.meta.SongTiming, snapped);
+      return { meta: { ...s.meta, SongTiming: timing } };
     });
   },
 };
+
 });

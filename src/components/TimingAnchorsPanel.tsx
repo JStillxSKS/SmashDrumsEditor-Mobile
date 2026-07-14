@@ -1,6 +1,6 @@
 import type { TimingAnchor } from "../types/meta";
 import { useEditorStore } from "../store/useEditorStore";
-import { beatToTick, formatTick, RESOLUTION } from "../utils/resolution";
+import { beatToTick, formatTick } from "../utils/resolution";
 import { bpmAtAnchor, sortTimingAnchors } from "../utils/timing";
 
 export function TimingAnchorsPanel({ embedded = false }: { embedded?: boolean }) {
@@ -8,6 +8,7 @@ export function TimingAnchorsPanel({ embedded = false }: { embedded?: boolean })
     meta,
     placementMode,
     updateAnchor,
+    setAnchorBpm,
     addAnchor,
     addAnchorAtPlayhead,
     removeAnchor,
@@ -23,6 +24,14 @@ export function TimingAnchorsPanel({ embedded = false }: { embedded?: boolean })
 
   const content = (
     <>
+      <p className="hint">
+        Moonscraper-style BPM markers on <strong>whole beats</strong> only (Smash
+        stores SongTiming beats as ints). BPM applies forward until the next
+        marker. Lock freezes absolute time. Notes can sit on 1/16s — tempo
+        markers cannot. Wrong fractional end beats make the editor look fine
+        and the game drift.
+      </p>
+
       <button
         className={`btn btn-accent placement-btn${placing ? " is-active" : ""}`}
         type="button"
@@ -34,12 +43,13 @@ export function TimingAnchorsPanel({ embedded = false }: { embedded?: boolean })
       <ul className="phase-list anchor-list">
         {anchors.map((anchor, index) => (
           <AnchorItem
-            key={`${anchor.beat}-${anchor.timer}-${index}`}
+            key={`${anchor.beat}-${index}`}
             anchor={anchor}
             index={index}
             anchors={anchors}
-            canRemove={anchors.length > 2}
+            canRemove={anchors.length > 2 && index > 0}
             onUpdate={(patch) => updateAnchor(index, patch)}
+            onSetBpm={(bpm) => setAnchorBpm(index, bpm)}
             onRemove={() => removeAnchor(index)}
           />
         ))}
@@ -62,8 +72,7 @@ export function TimingAnchorsPanel({ embedded = false }: { embedded?: boolean })
 
   return (
     <section className="panel">
-      <h3>Timing Anchors</h3>
-      <p className="hint">Beat/time sync — exported in [SyncTrack]</p>
+      <h3>BPM / Sync Track</h3>
       {content}
     </section>
   );
@@ -75,6 +84,7 @@ function AnchorItem({
   anchors,
   canRemove,
   onUpdate,
+  onSetBpm,
   onRemove,
 }: {
   anchor: TimingAnchor;
@@ -82,22 +92,25 @@ function AnchorItem({
   anchors: TimingAnchor[];
   canRemove: boolean;
   onUpdate: (patch: Partial<TimingAnchor>) => void;
+  onSetBpm: (bpm: number) => void;
   onRemove: () => void;
 }) {
   const tick = beatToTick(anchor.beat);
-  const bpm =
-    index < anchors.length - 1
-      ? Math.round(bpmAtAnchor(anchors, index) * 10) / 10
-      : null;
+  const isLast = index >= anchors.length - 1;
+  const isRoot = index === 0;
+  const forwardBpm = !isLast ? Math.round(bpmAtAnchor(anchors, index) * 1000) / 1000 : null;
+  const locked = Boolean(anchor.anchored);
 
   return (
-    <li className="phase-item anchor-item">
+    <li className={`phase-item anchor-item${locked ? " is-anchored" : ""}`}>
       <div className="phase-item-head">
-        <span className="anchor-badge">Tick {formatTick(tick)}</span>
+        <span className="anchor-badge">
+          {isRoot ? "Start" : locked ? "Anchored" : "BPM"} · {formatTick(tick)}
+        </span>
         <button
           className="phase-remove"
           type="button"
-          title="Remove anchor"
+          title="Remove marker"
           disabled={!canRemove}
           onClick={onRemove}
         >
@@ -111,25 +124,90 @@ function AnchorItem({
           <input
             type="number"
             min={0}
-            step={1 / RESOLUTION}
+            step={1}
             value={anchor.beat}
-            onChange={(e) => onUpdate({ beat: Math.max(0, Number(e.target.value)) })}
+            disabled={isRoot}
+            onChange={(e) => onUpdate({ beat: Math.max(0, Math.round(Number(e.target.value))) })}
           />
         </label>
-        <label>
-          Time (s)
-          <input
-            type="number"
-            min={0}
-            step={0.001}
-            value={anchor.timer}
-            onChange={(e) => onUpdate({ timer: Math.max(0, Number(e.target.value)) })}
-          />
-        </label>
+        {forwardBpm !== null ? (
+          <label>
+            BPM →
+            <input
+              type="number"
+              min={1}
+              max={999}
+              step={0.001}
+              value={forwardBpm}
+              title="Tempo from this marker until the next (Moonscraper B)"
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (Number.isFinite(v) && v > 0) onSetBpm(v);
+              }}
+            />
+          </label>
+        ) : (
+          <label>
+            Time (s)
+            <input
+              type="number"
+              min={0}
+              step={0.001}
+              value={anchor.timer}
+              title="End marker time — edits previous segment BPM"
+              onChange={(e) => onUpdate({ timer: Math.max(0, Number(e.target.value)) })}
+            />
+          </label>
+        )}
       </div>
 
-      {bpm !== null && (
-        <p className="hint anchor-meta hint-inline">{bpm} BPM → next</p>
+      {!isLast && (
+        <div className="phase-fields-row">
+          <label>
+            Time (s)
+            <input
+              type="number"
+              min={0}
+              step={0.001}
+              value={anchor.timer}
+              disabled={isRoot}
+              title={
+                isRoot
+                  ? "Beat 0 time is always 0; use Offset for lead-in"
+                  : "Edit time to stretch the previous BPM (Moonscraper drag)"
+              }
+              onChange={(e) => onUpdate({ timer: Math.max(0, Number(e.target.value)) })}
+            />
+          </label>
+          {!isRoot && (
+            <label className="anchor-lock" title="Lock absolute time when earlier BPMs change">
+              <input
+                type="checkbox"
+                checked={locked}
+                onChange={(e) => onUpdate({ anchored: e.target.checked })}
+              />
+              Lock
+            </label>
+          )}
+        </div>
+      )}
+
+      {isLast && !isRoot && (
+        <label className="anchor-lock" title="Lock absolute time when earlier BPMs change">
+          <input
+            type="checkbox"
+            checked={locked}
+            onChange={(e) => onUpdate({ anchored: e.target.checked })}
+          />
+          Lock end time
+        </label>
+      )}
+
+      {forwardBpm !== null && (
+        <p className="hint anchor-meta hint-inline">
+          {forwardBpm} BPM until next marker
+          {locked ? " · locked" : ""}
+        </p>
       )}
     </li>
   );

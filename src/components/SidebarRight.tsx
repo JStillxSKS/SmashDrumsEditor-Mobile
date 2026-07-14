@@ -62,6 +62,24 @@ export function SidebarRight() {
             value={pixelsPerTick}
             onChange={(e) => setPixelsPerTick(Number(e.target.value))}
           />
+          <div className="zoom-btn-row" role="group" aria-label="Zoom">
+            <button
+              type="button"
+              className="btn"
+              title="Zoom out"
+              onClick={() => setPixelsPerTick(pixelsPerTick - 0.04)}
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="btn"
+              title="Zoom in"
+              onClick={() => setPixelsPerTick(pixelsPerTick + 0.04)}
+            >
+              +
+            </button>
+          </div>
         </div>
 
         <div className="panel-section">

@@ -33,7 +33,8 @@ On Windows, `ensure-electron.cjs` uses PowerShell `Expand-Archive` because the d
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Vite dev server only (browser at `http://127.0.0.1:5174`) |
+| `npm run dev` | Vite dev server (browser; LAN-reachable via printed Network URL) |
+| `npm run dev:lan` | Same as `dev` with host binding (Android phone testing) |
 | `npm run desktop:dev` | Vite + Electron with hot reload |
 | `npm run build` | TypeScript check + production web build → `dist/` |
 | `npm run desktop:build` | Web build + portable Windows EXE → `release/` |
@@ -59,6 +60,19 @@ Helper scripts in `scripts/`:
 | `create-shortcuts.ps1` | Creates Windows shortcuts with the app icon |
 | `clean-release.cjs` | Kills locked processes and cleans `release/win-unpacked*` |
 | `ensure-electron.cjs` | Ensures Electron binary is installed after `npm install` |
+
+## Testing mobile on Android
+
+1. PC and phone on the same Wi‑Fi.
+2. From `SmashDrumsEditor/`: `npm run dev` (or `npm run dev:lan`).
+3. Note the **Network** URL Vite prints (e.g. `http://192.168.x.x:5174`).
+4. Open that URL in **Chrome on Android**.
+5. Choose Portrait or Landscape when prompted.
+6. Allow audio playback after a user tap (Play).
+
+Firewall may block port 5174 — allow Node/Vite if the phone cannot connect.
+
+Desktop Electron builds are unchanged (`npm run desktop:dev` / `desktop:build`).
 
 ## Building the portable EXE
 
