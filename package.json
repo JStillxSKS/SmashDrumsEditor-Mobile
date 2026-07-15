@@ -21,6 +21,10 @@
     "desktop:clean": "node scripts/clean-release.cjs",
     "create-icon": "node scripts/create-app-icon.cjs",
     "desktop:build": "npm run build && node scripts/clean-release.cjs && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --config electron-builder.config.cjs",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:apk": "npm run android:sync && cd android && .\\gradlew.bat assembleDebug && cd .. && node scripts/copy-android-apk.cjs",
+    "android:apk:copy": "node scripts/copy-android-apk.cjs",
     "postinstall": "node scripts/ensure-electron.cjs"
   },
   "dependencies": {

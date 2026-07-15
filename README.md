@@ -11,6 +11,7 @@ A desktop chart editor for [Smash Drums](https://smashdrums.com/) custom songs. 
 | [User Guide](docs/USER_GUIDE.md) | How to chart songs, use the highway editor, timing, and export |
 | [File Formats](docs/FILE_FORMATS.md) | Import/export formats (`.indies`, `meta.json`, Clone Hero charts) |
 | [Development](docs/DEVELOPMENT.md) | Setup, scripts, building the portable EXE, project layout |
+| [Android APK](docs/ANDROID_APK.md) | Phone/tablet install — **APK only** for non-tech users |
 
 ## Quick start
 
@@ -25,7 +26,9 @@ npm run desktop:dev
 
 **Windows shortcuts:** Run `Install Launchers.bat` once to create icon shortcuts in the project root. Batch files live in `launchers/`.
 
-**Portable app:** Download [Smash-Drums-Editor-0.1.2-portable.exe](https://github.com/JStillxSKS/SmashDrumsEditor/releases/download/v0.1.2/Smash-Drums-Editor-0.1.2-portable.exe) (Windows x64, no install), or build with `npm run desktop:build`
+**Portable Windows app:** Download [Smash-Drums-Editor-0.1.2-portable.exe](https://github.com/JStillxSKS/SmashDrumsEditor/releases/download/v0.1.2/Smash-Drums-Editor-0.1.2-portable.exe) (Windows x64, no install), or build with `npm run desktop:build`
+
+**Android phone/tablet (no PC):** give users **only** the APK — `Smash-Drums-Editor-0.1.2.apk` (see [Android APK](docs/ANDROID_APK.md)). Build with `npm run android:apk` (needs JDK 21 + Android SDK).
 
 ## Features
 

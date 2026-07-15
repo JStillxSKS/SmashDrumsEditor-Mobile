@@ -6,6 +6,17 @@ dist
 dist-ssr
 release
 
+# Android / Capacitor (keep project; ignore local build artifacts)
+android/.gradle/
+android/app/build/
+android/build/
+android/captures/
+android/local.properties
+android/.idea/
+*.apk
+!release/apk/*.apk
+*.aab
+
 # Exported songs (keep folder via output/.gitkeep)
 output/*
 !output/.gitkeep
