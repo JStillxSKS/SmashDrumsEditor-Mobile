@@ -2,19 +2,25 @@
 
 For people **without a PC**: install the **`.apk` only**. One file, tap to install.
 
-## What to give users
+## One-click download (what players want)
+
+**APK only (install this):**  
+https://github.com/JStillxSKS/SmashDrumsEditor/releases/download/v0.1.2/Smash-Drums-Editor-0.1.2.apk  
+
+**Release page (Assets button):**  
+https://github.com/JStillxSKS/SmashDrumsEditor/releases/tag/v0.1.2  
+
+Share the **.apk** link (or the Releases page). Players do **not** need the full project zip.
 
 | File | Who | What |
 |------|-----|------|
-| **`Smash-Drums-Editor-*.apk`** | Everyone (phones / tablets) | **Only file they need** — install and open the app |
-| **`SmashDrumsEditor-full-v*.zip`** | Devs / advanced | Whole project folder in one zip (source + Android project) |
-
-Do **not** send the full zip to non-tech players — send **only the APK**.
+| **`Smash-Drums-Editor-*.apk`** | Everyone | **Only file they need** — install and open |
+| Full source / project zip | Devs | Optional; not for players |
 
 ## Install (phone / tablet) — simple
 
-1. Download **`Smash-Drums-Editor-x.x.x.apk`** (e.g. from Discord, Drive, or GitHub Releases).
-2. Open the file on the phone.
+1. Open the **APK download link** above (or tap the APK under **Assets** on the release page).
+2. Open the downloaded file on the phone.
 3. If Android asks: allow **Install unknown apps** for Chrome / Files / Discord.
 4. Tap **Install** → **Open**.
 5. First open: choose Portrait or Landscape when prompted.

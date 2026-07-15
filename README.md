@@ -28,7 +28,9 @@ npm run desktop:dev
 
 **Portable Windows app:** Download [Smash-Drums-Editor-0.1.2-portable.exe](https://github.com/JStillxSKS/SmashDrumsEditor/releases/download/v0.1.2/Smash-Drums-Editor-0.1.2-portable.exe) (Windows x64, no install), or build with `npm run desktop:build`
 
-**Android phone/tablet (no PC):** give users **only** the APK — `Smash-Drums-Editor-0.1.2.apk` (see [Android APK](docs/ANDROID_APK.md)). Build with `npm run android:apk` (needs JDK 21 + Android SDK).
+**Android phone/tablet (no PC):** one click —  
+[**Download Smash-Drums-Editor-0.1.2.apk**](https://github.com/JStillxSKS/SmashDrumsEditor/releases/download/v0.1.2/Smash-Drums-Editor-0.1.2.apk)  
+(from [Releases](https://github.com/JStillxSKS/SmashDrumsEditor/releases/tag/v0.1.2); see [Android APK](docs/ANDROID_APK.md)).
 
 ## Features
 
